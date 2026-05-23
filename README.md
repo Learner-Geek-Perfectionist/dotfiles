@@ -76,9 +76,11 @@ bash install.sh --force-update    # 强制刷新/重装受管组件
 
 | 物理键 | 映射为 | 说明 |
 |--------|--------|------|
-| 右 Command | Ctrl + Alt + Cmd | **HyperKey** — Hammerspoon 所有快捷键的修饰键 |
-| 右 Option | Ctrl + Alt + Cmd | 同上，左右手均可触发 HyperKey |
+| 右 Command | Ctrl + Alt + Cmd | **HyperKey** — Hammerspoon 所有快捷键的修饰键；如果先按住左 Command，则保留给 Codex 截图 |
+| 右 Option | Ctrl + Alt + Cmd | 同上，左右手均可触发 HyperKey；如果先按住左 Command，则同样走 Codex 截图 |
 | CapsLock | 左 Shift | 废键利用，更符合人体工学 |
+
+右侧键采用前缀路由：默认按住右 Command 或右 Option 都进入 Hyper；先按住左 Command 时，右 Command / 右 Option 不进 Hyper，而是发送 Codex App 的左右 Command 截图组合。
 
 #### 输入法切换（Shift / Caps）
 
@@ -186,7 +188,7 @@ HyperKey 即 `Ctrl + Alt + Cmd`（通过右 Command 或右 Option 一键触发�
 | `mkdir` | `mkdir -p` | 自动创建父目录 |
 | `cp` | `cp -r` | 默认递归 |
 | `show` | `kitty +kitten icat` | 终端内显示图片 |
-| `ssh` | `kitten ssh`（Kitty 内） | 自动传输 terminfo |
+| `ssh` | Kitty 内默认 `kitten ssh` | `SetEnv KITTEN_SSH=0` 或 `KITTEN_SSH=0 ssh ...` 回退原生 ssh |
 | `rg` | rg + 自定义忽略规则 | 使用 `.config/ripgrep/ignore` |
 | `reload` | 重新加载所有 zsh 配置 | — |
 | `upgrade` | 远程拉取最新配置并重载 | — |

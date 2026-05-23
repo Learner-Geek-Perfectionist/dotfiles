@@ -238,6 +238,20 @@ run_python_checks() {
 	python3 -m py_compile .config/kitty/*.py
 }
 
+run_kitty_config_checks() {
+	cd "$REPO_ROOT"
+	if ! command -v kitty &>/dev/null; then
+		warn "kitty not found, skipping kitty.conf parse checks"
+		return 0
+	fi
+
+	local output
+	if ! output="$(kitty +runpy 'from kitty.config import load_config; import sys; bad=[]; load_config(".config/kitty/kitty.conf", accumulate_bad_lines=bad); [print(repr(x)) for x in bad]; sys.exit(1 if bad else 0)' 2>&1)"; then
+		printf '%s\n' "$output" >&2
+		fail "kitty.conf does not parse cleanly"
+	fi
+}
+
 run_lua_checks() {
 	cd "$REPO_ROOT"
 	if ! command -v luac &>/dev/null; then
@@ -309,6 +323,7 @@ run_test "Install clone path" run_install_clone_path_regression_checks
 run_test "Install clone does not retry GitHub SSH failures" run_install_clone_does_not_retry_github_ssh_failures
 run_test "Install clone does not retry non-SSH failures" run_install_clone_does_not_retry_non_ssh_failures
 run_test "Python syntax" run_python_checks
+run_test "kitty config parse" run_kitty_config_checks
 run_test "Lua syntax" run_lua_checks
 run_test "macOS IME toggle setup" run_macos_ime_toggle_setup_checks
 run_test "Hammerspoon cleanup" run_hammerspoon_cleanup_checks

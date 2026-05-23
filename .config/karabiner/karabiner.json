@@ -12,6 +12,52 @@
             "description": "Keep existing right-side remaps",
             "manipulators": [
               {
+                "description": "Let left_command + right_command reach Codex screenshot",
+                "from": {
+                  "key_code": "right_command",
+                  "modifiers": {
+                    "mandatory": [
+                      "left_command"
+                    ],
+                    "optional": [
+                      "any"
+                    ]
+                  }
+                },
+                "to": [
+                  {
+                    "key_code": "right_command",
+                    "modifiers": [
+                      "left_command"
+                    ]
+                  }
+                ],
+                "type": "basic"
+              },
+              {
+                "description": "Treat left_command + right_option as Codex screenshot",
+                "from": {
+                  "key_code": "right_option",
+                  "modifiers": {
+                    "mandatory": [
+                      "left_command"
+                    ],
+                    "optional": [
+                      "any"
+                    ]
+                  }
+                },
+                "to": [
+                  {
+                    "key_code": "right_command",
+                    "modifiers": [
+                      "left_command"
+                    ]
+                  }
+                ],
+                "type": "basic"
+              },
+              {
                 "description": "Change right_command to command+control+option",
                 "from": {
                   "key_code": "right_command",

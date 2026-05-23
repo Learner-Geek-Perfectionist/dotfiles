@@ -145,19 +145,38 @@ right_rule = next(
 )
 if right_rule is None:
     fail("missing right-side remap rule")
-if len(right_rule.get("manipulators", [])) != 2:
-    fail("right-side remap rule should keep exactly 2 manipulators")
+if len(right_rule.get("manipulators", [])) != 4:
+    fail("right-side remap rule should keep exactly 4 manipulators")
+
+def assert_left_command_escape(manipulator, from_key):
+    if manipulator.get("from", {}).get("key_code") != from_key:
+        fail(f"left_command escape should start from {from_key}")
+    modifiers = manipulator.get("from", {}).get("modifiers", {})
+    if modifiers.get("mandatory") != ["left_command"]:
+        fail(f"left_command escape from {from_key} should require left_command")
+    if modifiers.get("optional") != ["any"]:
+        fail(f"left_command escape from {from_key} should keep optional any")
+    if manipulator.get("to", [{}])[0].get("key_code") != "right_command":
+        fail(f"left_command escape from {from_key} should send right_command for Codex screenshot")
+    if manipulator.get("to", [{}])[0].get("modifiers") != ["left_command"]:
+        fail(f"left_command escape from {from_key} should send left_command with right_command")
 
 def assert_right_remap(manipulator, from_key):
     if manipulator.get("from", {}).get("key_code") != from_key:
         fail(f"right-side remap should start from {from_key}")
+    if manipulator.get("from", {}).get("modifiers", {}).get("optional") != ["any"]:
+        fail(f"right-side remap from {from_key} should keep optional any")
+    if "mandatory" in manipulator.get("from", {}).get("modifiers", {}):
+        fail(f"right-side remap from {from_key} should not require mandatory modifiers")
     if manipulator.get("to", [{}])[0].get("key_code") != "left_command":
         fail(f"right-side remap from {from_key} should remap to left_command")
     if manipulator.get("to", [{}])[0].get("modifiers") != ["left_control", "left_option"]:
         fail(f"right-side remap from {from_key} should keep the command+control+option modifiers")
 
-assert_right_remap(right_rule["manipulators"][0], "right_command")
-assert_right_remap(right_rule["manipulators"][1], "right_option")
+assert_left_command_escape(right_rule["manipulators"][0], "right_command")
+assert_left_command_escape(right_rule["manipulators"][1], "right_option")
+assert_right_remap(right_rule["manipulators"][2], "right_command")
+assert_right_remap(right_rule["manipulators"][3], "right_option")
 
 arrow_keys = {"left_arrow", "right_arrow", "up_arrow", "down_arrow"}
 for rule in rules:
@@ -1070,6 +1089,101 @@ EOF
 	assert_file_exists "$flag_file"
 	assert_equal "1" "$(cat "$flag_file")" "zinit guard flag"
 	assert_file_missing "$load_count"
+}
+
+test_zshrc_kitty_ssh_wrapper_defaults_to_kitten_and_supports_opt_out() {
+	local tmp_home fake_bin log
+	tmp_home=$(make_temp_dir)
+	fake_bin=$(make_temp_dir)
+	log="$tmp_home/ssh-wrapper.log"
+	trap "rm -rf '$tmp_home' '$fake_bin'" RETURN
+
+	cp "$REPO_ROOT/.zshrc" "$tmp_home/.zshrc"
+	mkdir -p "$tmp_home/.cache/zsh"
+
+	cat >"$fake_bin/ssh" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = "-G" ]; then
+	case " $* " in
+	*" native-host "*)
+		printf '%s\n' 'setenv KITTEN_SSH=0'
+		;;
+	*)
+		printf '%s\n' 'hostname default-host'
+		;;
+	esac
+	exit 0
+fi
+printf 'native:%s\n' "$*" >>"$SSH_WRAPPER_LOG"
+EOF
+
+	cat >"$fake_bin/kitten" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = "ssh" ]; then
+	shift
+	printf 'kitten:%s\n' "$*" >>"$SSH_WRAPPER_LOG"
+	exit 0
+fi
+exit 1
+EOF
+	chmod +x "$fake_bin/ssh" "$fake_bin/kitten"
+
+	if ! HOME="$tmp_home" ZSH_CACHE_DIR="$tmp_home/.cache/zsh" PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+		TERM="xterm-256color" KITTY_WINDOW_ID=1 SSH_WRAPPER_LOG="$log" zsh -fic '
+			source "$HOME/.zshrc"
+			ssh default-host
+			ssh native-host
+			KITTEN_SSH=0 ssh env-opt-out-host
+		' >/dev/null 2>&1; then
+		fail "kitty ssh wrapper fixture should execute"
+	fi
+
+	assert_contains "kitten:default-host" "$log"
+	assert_contains "native:native-host" "$log"
+	assert_contains "native:env-opt-out-host" "$log"
+}
+
+test_zshrc_skips_prompt_stack_for_interactive_shell_without_tty() {
+	local tmp_home prompt_stack_marker log timeout_cmd zsh_bin
+	tmp_home=$(make_temp_dir)
+	prompt_stack_marker="$tmp_home/prompt-stack-loaded"
+	log="$tmp_home/no-tty-zsh.log"
+	trap "rm -rf '$tmp_home'" RETURN
+
+	cp "$REPO_ROOT/.zshenv" "$tmp_home/.zshenv"
+	cp "$REPO_ROOT/.zshrc" "$tmp_home/.zshrc"
+	mkdir -p "$tmp_home/.config/zsh/plugins"
+
+	cat >"$tmp_home/.config/zsh/plugins/zinit.zsh" <<'EOF'
+#!/bin/zsh
+printf 'loaded\n' >"$HOME/prompt-stack-loaded"
+EOF
+
+	if command -v gtimeout >/dev/null 2>&1; then
+		timeout_cmd="gtimeout"
+	elif command -v timeout >/dev/null 2>&1; then
+		timeout_cmd="timeout"
+	else
+		timeout_cmd=""
+	fi
+	if [[ -x /bin/zsh ]]; then
+		zsh_bin="/bin/zsh"
+	else
+		zsh_bin="$(command -v zsh)"
+	fi
+
+	if [[ -n "$timeout_cmd" ]]; then
+		if ! HOME="$tmp_home" TERM="xterm-256color" "$timeout_cmd" 10 "$zsh_bin" -ic 'print -r -- no-tty-shell-ok' >"$log" 2>&1; then
+			cat "$log" >&2
+			fail "interactive zsh without tty should keep command execution usable"
+		fi
+	elif ! HOME="$tmp_home" TERM="xterm-256color" "$zsh_bin" -ic 'print -r -- no-tty-shell-ok' >"$log" 2>&1; then
+		cat "$log" >&2
+		fail "interactive zsh without tty should keep command execution usable"
+	fi
+
+	[[ "$(<"$log")" == *"no-tty-shell-ok"* ]] || fail "Expected no-tty shell command output in $log"
+	assert_file_missing "$prompt_stack_marker"
 }
 
 test_zsh_history_alias_shows_newest_first_with_timestamps() {
@@ -3031,6 +3145,8 @@ run_test "Dotfiles warns when zinit plugin sync fails" test_dotfiles_warns_when_
 run_test "zsh open wrapper preserves Codex deep links" test_zsh_open_wrapper_preserves_codex_deep_links
 run_test "zshrc does not reload zinit plugins when re-sourced" test_zshrc_does_not_reload_zinit_plugins_when_resourced
 run_test "zshrc detects preloaded zinit without re-sourcing plugin stack" test_zshrc_detects_preloaded_zinit_without_resourcing_plugin_stack
+run_test "zshrc kitty ssh wrapper defaults to kitten and supports opt-out" test_zshrc_kitty_ssh_wrapper_defaults_to_kitten_and_supports_opt_out
+run_test "zshrc skips prompt stack for interactive shell without tty" test_zshrc_skips_prompt_stack_for_interactive_shell_without_tty
 run_test "zsh history alias shows newest first with timestamps" test_zsh_history_alias_shows_newest_first_with_timestamps
 run_test "zsh fzf wrapper streams piped input without prefetch" test_zsh_fzf_wrapper_streams_piped_input_without_prefetch
 run_test "age-tokens does not leak decrypted values under xtrace" test_age_tokens_does_not_leak_decrypted_values_under_xtrace

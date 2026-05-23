@@ -10,9 +10,55 @@ if [[ "$TERM" == "dumb" ]]; then
 	return
 fi
 
-# 在 kitty 终端中自动用 kitten ssh（自动传 terminfo + shell integration）
+# 在 kitty 终端中默认用 kitten ssh；SSH config 中 `SetEnv KITTEN_SSH=0`
+# 或命令前缀 `KITTEN_SSH=0 ssh ...` 可对 Windows 等目标回退到原生 ssh。
 if [[ -n "$KITTY_WINDOW_ID" ]]; then
-	alias ssh='kitten ssh'
+	ssh() {
+		emulate -L zsh
+
+		local arg
+		for arg in "$@"; do
+			case "$arg" in
+			-G | -Q | -V)
+				command ssh "$@"
+				return
+				;;
+			esac
+		done
+
+		case "${KITTEN_SSH:l}" in
+		0 | false | no | off)
+			command ssh "$@"
+			return
+			;;
+		esac
+
+		if ! (( $+commands[kitten] )); then
+			command ssh "$@"
+			return
+		fi
+
+		# `ssh -G` prints the final config after Host matching. We use SetEnv
+		# as a harmless per-host opt-out marker instead of guessing remote OS.
+		local ssh_config
+		ssh_config="$(command ssh -G "$@" 2>/dev/null || true)"
+		if [[ -n "$ssh_config" ]] &&
+			print -r -- "$ssh_config" |
+				command awk '
+					tolower($1) == "setenv" {
+						for (i = 2; i <= NF; i++) {
+							field = tolower($i)
+							if (field ~ /^kitten_ssh=(0|false|no|off)$/) found = 1
+						}
+					}
+					END { exit found ? 0 : 1 }
+				'; then
+			command ssh "$@"
+			return
+		fi
+
+		command kitten ssh "$@"
+	}
 	# 创建固定路径 symlink，供外部工具（如 VS Code 插件）定位 Kitty socket
 	# kitty.conf 使用 kitty-{kitty_pid} 防多实例冲突，这里补一个稳定入口
 	[[ -n "$KITTY_LISTEN_ON" ]] && ln -sf "${KITTY_LISTEN_ON#unix:}" /tmp/kitty-socket
@@ -137,6 +183,14 @@ if [[ -z "${LS_COLORS:-}" ]]; then
 		eval "$("$_dircolors_cmd" -b 2>/dev/null)" 2>/dev/null
 	fi
 	unset _dircolors_cmd
+fi
+
+# p10k/gitstatus and zle widgets require a real terminal. Keep the shell
+# utilities above available for automation that invokes `zsh -ic` without a tty.
+if [[ -o interactive && ( ! -t 0 || ! -t 1 || ! -t 2 || ! -o zle ) ]]; then
+	PROMPT='%n@%m:%~$ '
+	RPROMPT=
+	return
 fi
 
 # ============================================
