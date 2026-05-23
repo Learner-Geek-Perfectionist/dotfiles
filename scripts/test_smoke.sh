@@ -1403,22 +1403,39 @@ EOF
 
 	assert_contains 'model = "gpt-5.5"' "$tmp_home/.codex/config.toml"
 	assert_contains '# Shared Codex CLI / Codex.app configuration baseline.' "$tmp_home/.codex/config.toml"
+	assert_contains 'goals = true' "$tmp_home/.codex/config.toml"
 	assert_contains '[mcp_servers.openaiDeveloperDocs]' "$tmp_home/.codex/config.toml"
 	assert_contains 'url = "https://developers.openai.com/mcp"' "$tmp_home/.codex/config.toml"
 	assert_contains '[mcp_servers.github]' "$tmp_home/.codex/config.toml"
 	assert_contains 'url = "https://api.githubcopilot.com/mcp/"' "$tmp_home/.codex/config.toml"
 	assert_contains 'bearer_token_env_var = "GITHUB_PERSONAL_ACCESS_TOKEN"' "$tmp_home/.codex/config.toml"
+	assert_not_contains '[mcp_servers.cloudflare-api-full]' "$tmp_home/.codex/config.toml"
 	assert_contains '[mcp_servers.tavily]' "$tmp_home/.codex/config.toml"
 	assert_contains 'args = ["-y", "tavily-mcp"]' "$tmp_home/.codex/config.toml"
 	assert_contains 'env_vars = ["TAVILY_API_KEY"]' "$tmp_home/.codex/config.toml"
 	assert_contains '[mcp_servers.fetch]' "$tmp_home/.codex/config.toml"
 	assert_contains 'args = ["-y", "@kazuph/mcp-fetch"]' "$tmp_home/.codex/config.toml"
+	assert_contains '[mcp_servers.chrome-devtools]' "$tmp_home/.codex/config.toml"
+	assert_contains 'command = "npx"' "$tmp_home/.codex/config.toml"
+	assert_contains '"chrome-devtools-mcp@latest"' "$tmp_home/.codex/config.toml"
+	assert_contains "\"--user-data-dir=$tmp_home/.cache/chrome-devtools-mcp/chrome-profile\"" "$tmp_home/.codex/config.toml"
+	assert_contains '"--redact-network-headers"' "$tmp_home/.codex/config.toml"
+	assert_contains '"--no-usage-statistics"' "$tmp_home/.codex/config.toml"
+	assert_contains '"--viewport=1600x1000"' "$tmp_home/.codex/config.toml"
+	assert_contains 'startup_timeout_sec = 120' "$tmp_home/.codex/config.toml"
 	assert_not_contains 'args = ["-lc",' "$tmp_home/.codex/config.toml"
 	assert_contains "notify = [\"$tmp_home/.codex/plugins/cache/openai-bundled/computer-use/1.0.999/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient\", \"turn-ended\"]" "$tmp_home/.codex/config.toml"
 	assert_contains '[marketplaces.openai-bundled]' "$tmp_home/.codex/config.toml"
 	assert_contains "source = \"$tmp_home/.codex/.tmp/bundled-marketplaces/openai-bundled\"" "$tmp_home/.codex/config.toml"
 	assert_contains '[plugins."browser-use@openai-bundled"]' "$tmp_home/.codex/config.toml"
 	assert_contains '[plugins."computer-use@openai-bundled"]' "$tmp_home/.codex/config.toml"
+	assert_contains '[plugins."cloudflare@openai-curated"]' "$tmp_home/.codex/config.toml"
+	assert_contains '[plugins."browser@openai-bundled"]' "$tmp_home/.codex/config.toml"
+	assert_contains '[plugins."chrome@openai-bundled"]' "$tmp_home/.codex/config.toml"
+	assert_contains '[desktop.open-in-target-preferences]' "$tmp_home/.codex/config.toml"
+	assert_contains 'global = "vscode"' "$tmp_home/.codex/config.toml"
+	assert_contains '[desktop.open-in-target-preferences.perPath]' "$tmp_home/.codex/config.toml"
+	assert_contains "\"$tmp_home\" = \"vscode\"" "$tmp_home/.codex/config.toml"
 	assert_contains "[projects.\"$external_project\"]" "$tmp_home/.codex/config.toml"
 	assert_contains "[projects.\"$tmp_home\"]" "$tmp_home/.codex/config.toml"
 	assert_contains "[projects.\"$child_project\"]" "$tmp_home/.codex/config.toml"
@@ -1606,6 +1623,7 @@ EOF
 	assert_contains $'prefix\t'"$tmp_home/.local" "$state_file"
 	assert_contains "install -g @anthropic-ai/claude-code@latest" "$npm_log"
 	assert_contains "install -g @openai/codex@latest" "$npm_log"
+	assert_contains "install -g ccusage@latest" "$npm_log"
 	assert_contains "install -g @mermaid-js/mermaid-cli@latest" "$npm_log"
 	assert_contains "install -g typescript-language-server@latest" "$npm_log"
 	assert_contains "install -g typescript@latest" "$npm_log"
@@ -1681,6 +1699,7 @@ EOF
 	assert_contains "uninstall typescript" "$brew_log"
 	assert_contains "uninstall typescript-language-server" "$brew_log"
 	assert_contains "install -g @anthropic-ai/claude-code@latest" "$npm_log"
+	assert_contains "install -g ccusage@latest" "$npm_log"
 }
 
 test_claude_optional_on_linux_when_install_fails() {
@@ -1747,6 +1766,7 @@ prefix	$tmp_home/.local
 package	@anthropic-ai/claude-code	0
 package	@openai/codex	1
 package	@mermaid-js/mermaid-cli	0
+package	ccusage	0
 EOF
 
 	if ! HOME="$tmp_home" PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -1757,6 +1777,7 @@ EOF
 
 	assert_contains "uninstall -g @anthropic-ai/claude-code" "$npm_log"
 	assert_contains "uninstall -g @mermaid-js/mermaid-cli" "$npm_log"
+	assert_contains "uninstall -g ccusage" "$npm_log"
 	assert_not_contains "@openai/codex" "$npm_log"
 	assert_file_missing "$state_file"
 }
@@ -1997,6 +2018,7 @@ EOF
 	assert_not_contains "install -g @anthropic-ai/claude-code@latest" "$npm_log"
 	assert_not_contains "install -g typescript@latest" "$npm_log"
 	assert_contains "install -g @openai/codex@latest" "$npm_log"
+	assert_contains "install -g ccusage@latest" "$npm_log"
 	assert_contains $'package\t@anthropic-ai/claude-code\t0' "$state_file"
 	assert_contains $'package\ttypescript\t0' "$state_file"
 	assert_contains "快速模式跳过" "$log"

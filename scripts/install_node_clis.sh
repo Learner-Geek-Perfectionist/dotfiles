@@ -13,6 +13,7 @@ STATE_FILE="$(node_cli_npm_state_file)"
 NODE_CLI_PACKAGES=(
 	"@anthropic-ai/claude-code"
 	"@openai/codex"
+	"ccusage"
 	"@mermaid-js/mermaid-cli"
 	"typescript-language-server"
 	"typescript"

@@ -59,6 +59,7 @@ bash install.sh --force-update    # 强制刷新/重装受管组件
 
 - **Claude Code** CLI + LSP 服务器（pyright, gopls, rust-analyzer, clangd, kotlin-ls 等）
 - **Codex CLI / Codex.app** 共享配置同步（官方入口 `~/.codex/config.toml`；model / sandbox / features / status line）
+- **ccusage** 本地用量统计（例如 `ccusage codex daily` 查看 Codex token / cost）
 - MCP 服务器集成、插件市场、Skill 系统
 
 ### 开发工具链

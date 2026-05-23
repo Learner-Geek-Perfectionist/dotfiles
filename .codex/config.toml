@@ -33,6 +33,7 @@ js_repl = true
 guardian_approval = true
 prevent_idle_sleep = true
 codex_hooks = true
+goals = true
 
 [sandbox_workspace_write]
 network_access = true
@@ -56,6 +57,18 @@ env_vars = ["TAVILY_API_KEY"]
 command = "npx"
 args = ["-y", "@kazuph/mcp-fetch"]
 
+[mcp_servers.chrome-devtools]
+command = "npx"
+args = [
+  "-y",
+  "chrome-devtools-mcp@latest",
+  "--user-data-dir={{HOME}}/.cache/chrome-devtools-mcp/chrome-profile",
+  "--redact-network-headers",
+  "--no-usage-statistics",
+  "--viewport=1600x1000",
+]
+startup_timeout_sec = 120
+
 [marketplaces.openai-bundled]
 source_type = "local"
 source = "{{HOME}}/.codex/.tmp/bundled-marketplaces/openai-bundled"
@@ -65,3 +78,18 @@ enabled = true
 
 [plugins."computer-use@openai-bundled"]
 enabled = true
+
+[plugins."cloudflare@openai-curated"]
+enabled = true
+
+[plugins."browser@openai-bundled"]
+enabled = true
+
+[plugins."chrome@openai-bundled"]
+enabled = true
+
+[desktop.open-in-target-preferences]
+global = "vscode"
+
+[desktop.open-in-target-preferences.perPath]
+"{{HOME}}" = "vscode"
