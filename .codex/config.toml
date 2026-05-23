@@ -22,17 +22,13 @@ hide_full_access_warning = true
 hide_rate_limit_model_nudge = true
 
 [features]
-skills = true
 unified_exec = true
 shell_snapshot = true
 multi_agent = true
-steer = true
-collaboration_modes = true
 personality = true
-js_repl = true
 guardian_approval = true
 prevent_idle_sleep = true
-codex_hooks = true
+hooks = true
 goals = true
 
 [sandbox_workspace_write]
