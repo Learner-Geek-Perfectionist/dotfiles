@@ -45,7 +45,9 @@
         "mainThreadWebview-markdown.preview": true
     },
     "files.associations": {
-        "**/ripgrep/ignore": "ignore"
+        "**/ripgrep/ignore": "ignore",
+        "**/.ssh/config": "properties",
+        "**/.ssh/config.d/*": "properties"
     },
     "files.exclude": {
         "**/node_modules": true,
