@@ -1440,6 +1440,80 @@ EOF
 	assert_not_contains 'TEST_AGE_SECRET="super-secret"' "$log"
 }
 
+test_edit_tokens_skips_save_and_reload_when_editor_discards_changes() {
+	local tmp_home fake_bin log age_log editor_log
+	tmp_home=$(make_temp_dir)
+	fake_bin=$(make_temp_dir)
+	log="$tmp_home/edit-tokens.log"
+	age_log="$tmp_home/age.log"
+	editor_log="$tmp_home/editor.log"
+	trap "rm -rf '$tmp_home' '$fake_bin'" RETURN
+
+	mkdir -p "$tmp_home/.ssh"
+	: >"$tmp_home/.ssh/id_ed25519"
+	: >"$tmp_home/.ssh/id_ed25519.pub"
+	: >"$tmp_home/.tokens.sh.age"
+
+	cat >"$fake_bin/age" <<'EOF'
+#!/bin/sh
+case "$1" in
+	-d)
+		printf '%s\n' "decrypt" >>"$AGE_LOG"
+		cat <<'INNER'
+export TEST_AGE_SECRET="stored-secret"
+INNER
+		;;
+	-R)
+		printf '%s\n' "encrypt" >>"$AGE_LOG"
+		while [ "$#" -gt 0 ]; do
+			if [ "$1" = "-o" ]; then
+				shift
+				printf '%s\n' "encrypted" >"$1"
+				exit 0
+			fi
+			shift
+		done
+		exit 1
+		;;
+	*)
+		exit 1
+		;;
+esac
+EOF
+	cat >"$fake_bin/nvim" <<'EOF'
+#!/bin/sh
+printf 'args: %s\n' "$*" >"$EDITOR_LOG"
+exit 0
+EOF
+	cat >"$fake_bin/cp" <<'EOF'
+#!/bin/sh
+printf '%s\n' "cp" >>"$AGE_LOG"
+exit 1
+EOF
+	chmod +x "$fake_bin/age" "$fake_bin/nvim" "$fake_bin/cp"
+
+	if ! HOME="$tmp_home" PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" AGE_LOG="$age_log" EDITOR_LOG="$editor_log" zsh -f -c '
+		source "'"$REPO_ROOT"'/.config/zsh/plugins/age-tokens.zsh"
+		TEST_AGE_SECRET="session-secret"
+		edit-tokens
+		print -r -- "value=${TEST_AGE_SECRET}"
+	' >"$log" 2>&1; then
+		cat "$log" >&2
+		fail "edit-tokens discard fixture failed"
+	fi
+
+	assert_contains "Tokens unchanged; skipped save and reload." "$log"
+	assert_not_contains "Tokens updated and reloaded." "$log"
+	assert_contains "value=session-secret" "$log"
+	assert_not_contains "encrypt" "$age_log"
+	assert_not_contains "cp" "$age_log"
+	assert_contains "args: -n -i NONE" "$editor_log"
+	assert_contains "noswapfile" "$editor_log"
+	assert_contains "noundofile" "$editor_log"
+	assert_contains "nobackup nowritebackup" "$editor_log"
+	assert_contains "shada=" "$editor_log"
+}
+
 test_dotfiles_uninstall_preserves_modified_files() {
 	local tmp_home fake_bin install_log uninstall_log superpowers_repo
 	tmp_home=$(make_temp_dir)
@@ -3392,6 +3466,7 @@ run_test "zshrc skips prompt stack for interactive shell without tty" test_zshrc
 run_test "zsh history alias shows newest first with timestamps" test_zsh_history_alias_shows_newest_first_with_timestamps
 run_test "zsh fzf wrapper streams piped input without prefetch" test_zsh_fzf_wrapper_streams_piped_input_without_prefetch
 run_test "age-tokens does not leak decrypted values under xtrace" test_age_tokens_does_not_leak_decrypted_values_under_xtrace
+run_test "edit-tokens skips save and reload when editor discards changes" test_edit_tokens_skips_save_and_reload_when_editor_discards_changes
 run_test "kitty conf enables native smart hotkeys" test_kitty_conf_enables_native_smart_hotkeys
 run_test "kitty custom kitten entrypoints do not require __file__" test_kitty_custom_kitten_entrypoints_do_not_require___file__
 run_test "kitty smart launcher does not cache ssh utils module" test_kitty_smart_launcher_does_not_cache_ssh_utils_module

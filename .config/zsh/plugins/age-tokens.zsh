@@ -36,7 +36,8 @@ edit-tokens() {
     return 1
   fi
 
-  local tmp tmp_age
+  local tmp tmp_age before_digest after_digest
+  local -a digest_cmd
   tmp=$(umask 077 && mktemp) || { echo "无法创建临时文件"; return 1; }
   trap "rm -f ${(q)tmp}" EXIT INT TERM
 
@@ -47,19 +48,49 @@ edit-tokens() {
     echo '# export GITHUB_TOKEN="ghp_xxx"' >> "$tmp"
   fi
 
+  if (( $+commands[shasum] )); then
+    digest_cmd=(shasum -a 256)
+  elif (( $+commands[sha256sum] )); then
+    digest_cmd=(sha256sum)
+  elif (( $+commands[openssl] )); then
+    digest_cmd=(openssl dgst -sha256)
+  elif (( $+commands[cksum] )); then
+    digest_cmd=(cksum)
+  else
+    echo "错误：未找到 shasum、sha256sum、openssl 或 cksum"
+    rm -f "$tmp"; trap - EXIT INT TERM; return 1
+  fi
+
+  before_digest=$("${digest_cmd[@]}" "$tmp") || { echo "无法读取临时文件"; rm -f "$tmp"; trap - EXIT INT TERM; return 1; }
+
   local editor=$(command -v nvim || command -v vim)
+  local -a editor_args
   if [[ -z "$editor" ]]; then
     echo "错误：未找到 nvim 或 vim"
     rm -f "$tmp"; trap - EXIT INT TERM; return 1
   fi
 
-  if ! "$editor" "$tmp"; then
+  if [[ "${editor:t}" == "nvim" ]]; then
+    editor_args=(-n -i NONE --cmd 'silent! set noswapfile' -c 'silent! setlocal noswapfile noundofile' -c 'silent! set nobackup nowritebackup shada=')
+  else
+    editor_args=(-n -i NONE --cmd 'silent! set noswapfile' -c 'silent! setlocal noswapfile noundofile' -c 'silent! set nobackup nowritebackup viminfo=')
+  fi
+
+  if ! "$editor" "${editor_args[@]}" "$tmp"; then
     echo "编辑器异常退出，放弃保存"
     rm -f "$tmp"; trap - EXIT INT TERM; return 1
   fi
 
+  after_digest=$("${digest_cmd[@]}" "$tmp") || { echo "无法读取临时文件"; rm -f "$tmp"; trap - EXIT INT TERM; return 1; }
+  if [[ "$before_digest" == "$after_digest" ]]; then
+    rm -f "$tmp"
+    trap - EXIT INT TERM
+    echo "Tokens unchanged; skipped save and reload."
+    return 0
+  fi
+
   # 先加密到临时文件，成功后原子替换，避免损坏原文件
-  tmp_age=$(mktemp)
+  tmp_age=$(umask 077 && mktemp)
   trap "rm -f ${(q)tmp} ${(q)tmp_age}" EXIT INT TERM
   if age -R "$AGE_SSH_PUB" -o "$tmp_age" "$tmp"; then
     mv "$tmp_age" "$AGE_TOKENS"
