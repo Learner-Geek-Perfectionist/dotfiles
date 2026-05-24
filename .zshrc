@@ -170,9 +170,18 @@ else
 fi
 unfunction configure_open_reveal_wrapper 2>/dev/null
 
-# Kitty smart launch context：记录“用户启动命令时所在目录”，直接写入
-# Kitty socket 内存状态，避免启动 kitten 子进程，也避免 zinit/hook 临时 cd
-# 到插件目录时污染 Cmd+E/Cmd+N 的继承目录。
+# Kitty smart launch context：记录“本地 shell/TUI 会话代表的目录”，直接写入
+# Kitty window user_vars（Kitty 进程内存），不落盘，也不启动 kitten 子进程。
+#
+# 设计意图：
+# - 本地 codex/claude 这类长生命周期 TUI 可能让 foreground cwd 暴露成
+#   zinit/fzf-tab/helper/node 包目录；Cmd+E/Cmd+N 应继承启动 TUI 的项目目录。
+# - 这个 dotfiles_context_cwd 只服务本地窗口，不是 SSH 远端 cwd 缓存。
+#   SSH 远端目录必须交给 kitty ssh kitten 的 ssh_kitten_cmdline +
+#   last_reported_cwd/OSC 7 + --cwd=current --hold-after-ssh。
+# - 快速连按时真正负责回溯源窗口的是 smart_launch_source_window_id；
+#   不要把这里改成 last_reported/current 的全局 cwd 缓存，否则会重新引入
+#   plugin/helper cwd 把目录带跑的问题。
 if [[ -n "${KITTY_WINDOW_ID:-}" ]]; then
 	typeset -g DOTFILES_KITTY_CONTEXT_CWD=""
 

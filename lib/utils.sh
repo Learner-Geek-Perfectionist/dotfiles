@@ -844,6 +844,15 @@ dotfiles_manifest_add_file() {
 	dotfiles_manifest_flush
 }
 
+dotfiles_manifest_remove_file() {
+	local path="$1"
+
+	[[ -n "${DOTFILES_MANIFEST_TMP:-}" && -f "${DOTFILES_MANIFEST_TMP:-}" ]] || return 1
+	awk -F'\t' -v path="$path" '!(NF >= 2 && $2 == path)' "$DOTFILES_MANIFEST_TMP" >"$DOTFILES_MANIFEST_TMP.filtered"
+	mv "$DOTFILES_MANIFEST_TMP.filtered" "$DOTFILES_MANIFEST_TMP"
+	dotfiles_manifest_flush
+}
+
 dotfiles_manifest_flush() {
 	local manifest tmp
 	manifest="$(dotfiles_manifest_file)"

@@ -1222,35 +1222,73 @@ test_zshrc_publishes_kitty_context_cwd_via_socket_fallback() {
 	assert_contains "dotfiles_context_cwd=$context_dir" "$log"
 }
 
-test_kitty_ssh_config_keeps_orb_on_ssh_kitten() {
+test_ssh_config_uses_setenv_for_kitten_ssh_opt_outs() {
 	local config
-	config="$REPO_ROOT/.config/kitty/ssh.conf"
-	[[ -f "$config" ]] || fail "kitty ssh.conf should be managed by dotfiles"
+	config="$REPO_ROOT/.ssh/config"
 
+	[[ ! -e "$REPO_ROOT/.config/kitty/ssh.conf" ]] || fail "kitty ssh.conf should not be managed by dotfiles"
 	python3 - "$config" <<'PY'
 import pathlib
 import sys
 
-path = pathlib.Path(sys.argv[1])
-blocks = []
-current = []
-for raw_line in path.read_text().splitlines():
+config = pathlib.Path(sys.argv[1])
+blocks = {}
+current_hosts = []
+for raw_line in config.read_text().splitlines():
     line = raw_line.strip()
     if not line or line.startswith("#"):
         continue
-    if line.lower().startswith("hostname "):
-        if current:
-            blocks.append(current)
-        current = [line.lower()]
-    elif current:
-        current.append(line.lower())
-if current:
-    blocks.append(current)
+    parts = line.split()
+    if parts and parts[0].lower() == "host":
+        current_hosts = [host.lower() for host in parts[1:]]
+        for host in current_hosts:
+            blocks.setdefault(host, [])
+    elif current_hosts:
+        for host in current_hosts:
+            blocks.setdefault(host, []).append(line.lower())
 
-for block in blocks:
-    if block[0] == "hostname orb" and "delegate ssh" in block[1:]:
-        raise SystemExit("orb must not delegate to plain ssh; Cmd+E needs kitty ssh metadata")
+fedora = blocks.get("fedora", [])
+orb = blocks.get("orb", [])
+if "setenv kitten_ssh=0" not in fedora:
+    raise SystemExit("fedora should opt out of kitten ssh via SetEnv KITTEN_SSH=0")
+if "setenv kitten_ssh=0" in orb:
+    raise SystemExit("orb must keep kitten ssh enabled for Cmd+E remote cwd cloning")
 PY
+}
+
+test_dotfiles_removes_legacy_managed_kitty_ssh_conf() {
+	local tmp_home fake_bin log superpowers_repo legacy
+	tmp_home=$(make_temp_dir)
+	fake_bin=$(make_temp_dir)
+	log="$tmp_home/install-dotfiles.log"
+	superpowers_repo=$(make_fake_superpowers_repo)
+	legacy="$tmp_home/.config/kitty/ssh.conf"
+	trap "rm -rf '$tmp_home' '$fake_bin' '$superpowers_repo'" RETURN
+
+	mkdir -p "$(dirname "$legacy")"
+	cat >"$legacy" <<'EOF'
+# Hosts listed here are intentionally delegated to plain OpenSSH because their
+# SSH config uses features that conflict with kitten ssh's remote bootstrap.
+#
+# Do not add OrbStack's `orb` host here: Cmd+E/Cmd+N remote directory cloning
+# depends on the SSH kitten metadata and OSC 7 cwd reports that `delegate ssh`
+# disables.
+hostname fedora
+delegate ssh
+EOF
+
+	cat >"$fake_bin/zsh" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+	chmod +x "$fake_bin/zsh"
+
+	if ! run_dotfiles_install "$tmp_home" "$fake_bin" "$superpowers_repo" "$log"; then
+		cat "$log" >&2
+		fail "install_dotfiles.sh legacy kitty ssh.conf cleanup failed"
+	fi
+
+	assert_file_missing "$legacy"
 }
 
 test_zshrc_skips_prompt_stack_for_interactive_shell_without_tty() {
@@ -2828,6 +2866,31 @@ if scenario == "burst-ssh":
     window_id_map = {42: source_window, 43: active_window}
     target_window_id = 43
 
+if scenario == "burst-ssh-local-helper-cwd":
+    source_window = Window()
+    source_window.id = 42
+    source_window.cwd_of_child = "/private/tmp"
+    source_window.screen = type("Screen", (), {"last_reported_cwd": "kitty-shell-cwd://orb/home/ouyangzhaoxin/project"})()
+    source_window.child = Child()
+    source_window.child.foreground_processes = [{"cmdline": ["ssh", "orb"], "cwd": "/Users/ouyangzhaoxin"}]
+    source_window.user_vars = {}
+    source_window.ssh_kitten_cmdline = lambda: ["kitten", "ssh", "--kitten", "cwd=/placeholder", "orb"]
+
+    active_window = Window()
+    active_window.id = 43
+    active_window.cwd_of_child = "/Users/ouyangzhaoxin"
+    active_window.screen = type("Screen", (), {"last_reported_cwd": None})()
+    active_window.child = Child()
+    active_window.child.foreground_processes = [
+        {"cmdline": ["kitten", "run-shell", "kitten", "ssh", "--kitten=cwd=/home/ouyangzhaoxin/project", "orb"], "cwd": "/Users/ouyangzhaoxin"},
+        {"cmdline": ["kitten", "ssh", "--kitten=cwd=/home/ouyangzhaoxin/project", "orb"], "cwd": "/Users/ouyangzhaoxin"},
+        {"cmdline": ["/usr/bin/ssh", "orb"], "cwd": "/Users/ouyangzhaoxin"},
+    ]
+    active_window.user_vars = {"smart_launch_source_window_id": "42"}
+    active_window.ssh_kitten_cmdline = lambda: ["kitten", "ssh", "--kitten=cwd=/home/ouyangzhaoxin/project", "orb"]
+    window_id_map = {42: source_window, 43: active_window}
+    target_window_id = 43
+
 class Boss:
     active_window = active_window
     window_id_map = window_id_map
@@ -3280,6 +3343,31 @@ if data["args"] != expected_args:
 PY
 }
 
+test_kitty_smart_launch_reuses_previous_stable_ssh_source_when_new_helper_has_local_cwd() {
+	local tmp_dir output_file
+	tmp_dir=$(make_temp_dir)
+	output_file="$tmp_dir/burst-ssh-local-helper-cwd-launch.json"
+	trap 'rm -rf "${tmp_dir:-}"' RETURN
+
+	run_kitty_ssh_utils_case burst-ssh-local-helper-cwd "" "$output_file"
+	python3 - <<PY
+import json
+import pathlib
+
+data = json.loads(pathlib.Path("$output_file").read_text())
+expected_args = [
+    "--type=tab",
+    "--source-window=id:42",
+    "--var",
+    "smart_launch_source_window_id=42",
+    "--cwd=current",
+    "--hold-after-ssh",
+]
+if data["args"] != expected_args:
+    raise SystemExit(f"Unexpected burst-ssh local helper cwd args: {data['args']!r}")
+PY
+}
+
 run_test "Dotfiles manifest and SSH include block" test_dotfiles_manifest_and_ssh_block
 run_test "Dotfiles falls back for macOS IME detection without jq or python" test_dotfiles_macos_ime_detection_falls_back_without_jq_or_python
 run_test "Dotfiles empty macOS IME fallback still installs" test_dotfiles_macos_ime_detection_empty_fallback_still_installs
@@ -3298,7 +3386,8 @@ run_test "zshrc detects preloaded zinit without re-sourcing plugin stack" test_z
 run_test "zshrc kitty ssh wrapper defaults to kitten and supports opt-out" test_zshrc_kitty_ssh_wrapper_defaults_to_kitten_and_supports_opt_out
 run_test "zshrc publishes kitty context cwd user var" test_zshrc_publishes_kitty_context_cwd_user_var
 run_test "zshrc publishes kitty context cwd via socket fallback" test_zshrc_publishes_kitty_context_cwd_via_socket_fallback
-run_test "kitty ssh config keeps orb on ssh kitten" test_kitty_ssh_config_keeps_orb_on_ssh_kitten
+run_test "SSH config uses SetEnv for kitten ssh opt-outs" test_ssh_config_uses_setenv_for_kitten_ssh_opt_outs
+run_test "Dotfiles removes legacy managed kitty ssh.conf" test_dotfiles_removes_legacy_managed_kitty_ssh_conf
 run_test "zshrc skips prompt stack for interactive shell without tty" test_zshrc_skips_prompt_stack_for_interactive_shell_without_tty
 run_test "zsh history alias shows newest first with timestamps" test_zsh_history_alias_shows_newest_first_with_timestamps
 run_test "zsh fzf wrapper streams piped input without prefetch" test_zsh_fzf_wrapper_streams_piped_input_without_prefetch
@@ -3353,6 +3442,7 @@ run_test "kitty smart launch realpath-matches local cwd while connecting" test_k
 run_test "kitty smart launch reuses previous stable local source during rapid repeats" test_kitty_smart_launch_reuses_previous_stable_local_source_during_rapid_repeats
 run_test "kitty smart launch treats foreground process cwd as stable during rapid repeats" test_kitty_smart_launch_treats_foreground_process_cwd_as_stable_during_rapid_repeats
 run_test "kitty smart launch reuses previous stable ssh source during rapid repeats" test_kitty_smart_launch_reuses_previous_stable_ssh_source_during_rapid_repeats
+run_test "kitty smart launch reuses previous stable ssh source when new helper has local cwd" test_kitty_smart_launch_reuses_previous_stable_ssh_source_when_new_helper_has_local_cwd
 
 section "Done"
 pass "Smoke checks completed"

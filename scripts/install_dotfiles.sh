@@ -196,6 +196,19 @@ _deploy_superpowers_skills() {
 	fi
 }
 
+remove_legacy_kitty_ssh_conf() {
+	local legacy="$HOME/.config/kitty/ssh.conf"
+	[[ -f "$legacy" ]] || return 0
+
+	if grep -qF "Do not add OrbStack's \`orb\` host here" "$legacy" &&
+		grep -qF "hostname fedora" "$legacy" &&
+		grep -qF "delegate ssh" "$legacy"; then
+		rm -f "$legacy"
+		dotfiles_manifest_remove_file "$legacy" 2>/dev/null || :
+		print_success "~/.config/kitty/ssh.conf legacy cleanup"
+	fi
+}
+
 refresh_zinit_completions() {
 	local zinit_bootstrap="$HOME/.local/share/zinit/zinit.git/zinit.zsh"
 	local zcompdump="${XDG_CACHE_HOME:-$HOME/.cache}/zsh/.zcompdump"
@@ -266,6 +279,7 @@ main() {
 	# .config 子目录（通用）
 	copy_path ".config/zsh" ".config/zsh"
 	copy_path ".config/kitty" ".config/kitty"
+	remove_legacy_kitty_ssh_conf
 	copy_path ".config/ripgrep" ".config/ripgrep"
 
 	# direnv 配置（替换 __HOME__ 为实际路径）

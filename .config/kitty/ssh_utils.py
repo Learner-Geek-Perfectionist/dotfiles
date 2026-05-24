@@ -8,10 +8,23 @@ from urllib.parse import unquote, urlparse
 from kitty.launch import launch as kitty_launch, parse_launch_args
 from kittens.ssh.utils import get_connection_data, is_kitten_cmdline
 
-# 快速连按 Cmd+E/Cmd+N 时，第二次按键可能已经落在“刚新开的标签页”上，
-# 但这个标签页还没来得及上报自己的工作目录。这里把原始稳定源窗口 id
-# 写到新窗口里，下一次连按时就能沿着这条线回溯；否则连按场景会掉到
-# HOME 或其他尚未稳定的工作目录。
+# Smart launch deliberately keeps only two small pieces of state in Kitty window
+# user vars:
+#
+# - smart_launch_source_window_id: a back pointer for rapid Cmd+E/Cmd+N repeats.
+#   A newly-created tab can become active before shell integration reports its
+#   cwd, so the next key press must be able to walk back to the original stable
+#   source window.
+# - dotfiles_context_cwd: the local shell/TUI context cwd published by .zshrc.
+#   This is for local long-running TUIs such as codex/claude whose foreground
+#   process cwd may drift into helper/plugin directories. It is not a remote SSH
+#   cwd cache; SSH remote cwd must come from Kitty's ssh kitten metadata and OSC 7
+#   last_reported_cwd.
+#
+# Pitfall: an SSH tab opened by the ssh kitten exposes local bootstrap/helper
+# processes immediately, often with cwd=$HOME, while the remote OSC 7 cwd arrives
+# later. Do not treat that local helper cwd as a stable SSH cwd during rapid
+# repeats, or the second Cmd+E will open at local HOME instead of the remote dir.
 _SMART_SOURCE_WINDOW_ID_VAR = 'smart_launch_source_window_id'
 _DOTFILES_CONTEXT_CWD_VAR = 'dotfiles_context_cwd'
 
@@ -140,17 +153,31 @@ def _extract_context_cwd(window):
     return cwd
 
 
+def _window_has_stable_repeat_cwd(window):
+    # For local windows, a foreground cwd can be a useful early signal and keeps
+    # codex/claude rapid repeats from falling back to HOME. For SSH-shaped
+    # windows, however, foreground cwd is usually the local ssh/kitten helper cwd
+    # during bootstrap. Wait for last_reported_cwd instead, or walk back through
+    # smart_launch_source_window_id to the previous stable SSH source.
+    if _extract_last_reported_cwd(window) is not None:
+        return True
+
+    ssh_kitten_cmdline = _extract_ssh_kitten_cmdline(window)
+    if _window_looks_ssh_shaped(window, ssh_kitten_cmdline=ssh_kitten_cmdline):
+        return False
+
+    return _extract_foreground_process_cwd(window) is not None
+
+
 def _resolve_repeat_source_window(boss, window):
     seen_window_ids = {window.id}
     current_window = window
 
     # 新开的标签页可能先获得焦点，但此时还没有任何可信的工作目录元数据。
     # 这种情况下沿着记录下来的源窗口链一路回溯，直到找到一个已经稳定上报
-    # 工作目录的窗口；如果链断了，就停止回溯。
-    while (
-        _extract_last_reported_cwd(current_window) is None
-        and _extract_foreground_process_cwd(current_window) is None
-    ):
+    # 工作目录的窗口；SSH bootstrap 暴露的本地 helper cwd 不算稳定远端目录。
+    # 如果链断了，就停止回溯。
+    while not _window_has_stable_repeat_cwd(current_window):
         source_window_id = _extract_user_var(current_window, _SMART_SOURCE_WINDOW_ID_VAR)
         if source_window_id is None:
             break
