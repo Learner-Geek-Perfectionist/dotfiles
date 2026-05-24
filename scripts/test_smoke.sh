@@ -1132,7 +1132,6 @@ EOF
   "unrelated-root-key": "preserved"
 }
 EOF
-	cp "$state" "$state_bak"
 
 	CODEX_HOME="$tmp_codex" HOME="$tmp_home" node "$REPO_ROOT/scripts/sync_codex_launch_defaults.js" >/dev/null
 

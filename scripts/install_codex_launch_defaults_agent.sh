@@ -63,6 +63,7 @@ cat >"$tmp_plist" <<EOF
 	<array>
 		<string>$CODEX_HOME_DIR/config.toml</string>
 		<string>$CODEX_HOME_DIR/.codex-global-state.json</string>
+		<string>$CODEX_HOME_DIR/.codex-global-state.json.bak</string>
 	</array>
 	<key>ThrottleInterval</key>
 	<integer>2</integer>

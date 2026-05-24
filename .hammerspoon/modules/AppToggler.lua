@@ -12,6 +12,7 @@ local codexLaunchPath = "/usr/bin/env"
 local codexLaunchEnvPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 local codexRuntimeServiceTier = "fast"
 local codexDesktopServiceTier = "priority"
+local codexLaunchDefaultsVersion = "2026-05-24-priority-fast-v3"
 local codexFixedConfigArgs = {
     "-c", 'model="gpt-5.5"',
     "-c", "model_context_window=1050000",
@@ -94,6 +95,20 @@ local function codexConfigPath()
     end
 
     return home .. "/.codex/config.toml"
+end
+
+local function codexLaunchMarkerPath()
+    local codexHome = os.getenv("CODEX_HOME")
+    if codexHome and codexHome ~= "" then
+        return codexHome .. "/codex-launch-defaults-hammerspoon.json"
+    end
+
+    local home = os.getenv("HOME")
+    if not home or home == "" then
+        return nil
+    end
+
+    return home .. "/.codex/codex-launch-defaults-hammerspoon.json"
 end
 
 local function buildCodexDesktopState(state)
@@ -259,6 +274,33 @@ local function writeFileAtomically(path, content)
     return true
 end
 
+local function decodeJsonTable(content)
+    local decodeOk, decoded = pcall(hs.json.decode, content)
+    if not decodeOk or type(decoded) ~= "table" then
+        return nil
+    end
+
+    return decoded
+end
+
+local function writeCodexLaunchMarker(payload)
+    if not hs.json or not hs.json.encode then
+        return false, "hs.json unavailable"
+    end
+
+    local path = codexLaunchMarkerPath()
+    if not path then
+        return false, "CODEX_HOME/HOME unavailable"
+    end
+
+    local encodeOk, encoded = pcall(hs.json.encode, payload)
+    if not encodeOk or type(encoded) ~= "string" then
+        return false, "marker JSON encode failed"
+    end
+
+    return writeFileAtomically(path, encoded .. "\n")
+end
+
 local function syncCodexDesktopState()
     if not hs.json or not hs.json.decode or not hs.json.encode then
         return false, "hs.json unavailable"
@@ -269,16 +311,29 @@ local function syncCodexDesktopState()
         return false, "CODEX_HOME/HOME unavailable"
     end
 
+    local backupPath = path .. ".bak"
     local state = {}
     local content, readErr = readFile(path)
     if content and content ~= "" then
-        local decodeOk, decoded = pcall(hs.json.decode, content)
-        if not decodeOk or type(decoded) ~= "table" then
-            return false, "invalid state JSON"
+        local decoded = decodeJsonTable(content)
+        if decoded then
+            state = decoded
+        else
+            local backupContent = readFile(backupPath)
+            local backupDecoded = backupContent and backupContent ~= "" and decodeJsonTable(backupContent) or nil
+            if not backupDecoded then
+                return false, "invalid state JSON"
+            end
+            state = backupDecoded
         end
-        state = decoded
     elseif readErr and not tostring(readErr):find("No such file", 1, true) then
         return false, readErr
+    else
+        local backupContent = readFile(backupPath)
+        local backupDecoded = backupContent and backupContent ~= "" and decodeJsonTable(backupContent) or nil
+        if backupDecoded then
+            state = backupDecoded
+        end
     end
 
     state = buildCodexDesktopState(state)
@@ -288,7 +343,12 @@ local function syncCodexDesktopState()
         return false, "state JSON encode failed"
     end
 
-    return writeFileAtomically(path, encoded .. "\n")
+    local writeOk, writeErr = writeFileAtomically(path, encoded .. "\n")
+    if not writeOk then
+        return false, writeErr
+    end
+
+    return writeFileAtomically(backupPath, encoded .. "\n")
 end
 
 local function syncCodexConfig()
@@ -310,11 +370,22 @@ end
 
 local function syncCodexLaunchDefaults()
     local stateOk, stateErr = syncCodexDesktopState()
+    local configOk, configErr = syncCodexConfig()
+
+    writeCodexLaunchMarker({
+        version = codexLaunchDefaultsVersion,
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+        runtime_service_tier = codexRuntimeServiceTier,
+        desktop_service_tier = codexDesktopServiceTier,
+        state_ok = stateOk,
+        state_error = stateErr,
+        config_ok = configOk,
+        config_error = configErr,
+    })
+
     if not stateOk then
         return false, stateErr
     end
-
-    local configOk, configErr = syncCodexConfig()
     if not configOk then
         return false, configErr
     end
@@ -462,6 +533,7 @@ end
 
 M._codexDesktopStateForTest = buildCodexDesktopState
 M._codexConfigForTest = buildCodexConfig
+M._codexLaunchMarkerPathForTest = codexLaunchMarkerPath
 M._syncCodexDesktopStateForTest = syncCodexDesktopState
 M._syncCodexConfigForTest = syncCodexConfig
 

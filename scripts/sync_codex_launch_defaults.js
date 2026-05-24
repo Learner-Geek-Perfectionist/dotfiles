@@ -36,6 +36,10 @@ const configPath = path.join(codexHome, "config.toml");
 const statePath = path.join(codexHome, ".codex-global-state.json");
 const stateBackupPath = `${statePath}.bak`;
 
+function isoNow() {
+  return new Date().toISOString();
+}
+
 function readText(filePath) {
   try {
     return fs.readFileSync(filePath, "utf8");
@@ -158,6 +162,42 @@ function buildConfig(content) {
   return next;
 }
 
+function readTomlKey(content, sectionName, key) {
+  const lines = splitLines(content);
+  let inSection = sectionName == null;
+  const keyPattern = new RegExp(`^\\s*${escapeRegExp(key)}\\s*=\\s*(.*?)\\s*$`);
+
+  for (const line of lines) {
+    const header = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (header) {
+      inSection = header[1] === sectionName;
+      continue;
+    }
+    if (!inSection) {
+      continue;
+    }
+
+    const match = line.match(keyPattern);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+function summarizeConfig(content) {
+  return {
+    model: readTomlKey(content, null, "model"),
+    service_tier: readTomlKey(content, null, "service_tier"),
+    desktop_default_service_tier: readTomlKey(
+      content,
+      "desktop",
+      "default-service-tier",
+    ),
+  };
+}
+
 function readState(filePath) {
   const content = readText(filePath);
   if (content.trim() === "") {
@@ -166,8 +206,71 @@ function readState(filePath) {
   return JSON.parse(content);
 }
 
+function readStateOrEmpty(filePath, fallbackPath) {
+  const content = readText(filePath);
+  if (content.trim() !== "") {
+    try {
+      return JSON.parse(content);
+    } catch (error) {
+      if (fallbackPath) {
+        const fallbackContent = readText(fallbackPath);
+        if (fallbackContent.trim() !== "") {
+          try {
+            return JSON.parse(fallbackContent);
+          } catch {
+            // Fall through and start from an empty state. The pinned keys are
+            // safer than leaving a corrupt state file for Codex.app startup.
+          }
+        }
+      }
+      console.error(
+        `${isoNow()} Replacing unreadable Codex state ${filePath}: ${error.message}`,
+      );
+    }
+  }
+
+  if (fallbackPath) {
+    const fallbackContent = readText(fallbackPath);
+    if (fallbackContent.trim() !== "") {
+      try {
+        return JSON.parse(fallbackContent);
+      } catch {
+        // Use an empty state below if both files are absent or unreadable.
+      }
+    }
+  }
+
+  return {};
+}
+
+function summarizeState(state) {
+  const persisted =
+    state &&
+    typeof state === "object" &&
+    !Array.isArray(state) &&
+    state["electron-persisted-atom-state"] &&
+    typeof state["electron-persisted-atom-state"] === "object" &&
+    !Array.isArray(state["electron-persisted-atom-state"])
+      ? state["electron-persisted-atom-state"]
+      : {};
+  const modeByHost =
+    persisted["agent-mode-by-host-id"] &&
+    typeof persisted["agent-mode-by-host-id"] === "object" &&
+    !Array.isArray(persisted["agent-mode-by-host-id"])
+      ? persisted["agent-mode-by-host-id"]
+      : {};
+
+  return {
+    default_service_tier: persisted["default-service-tier"] ?? null,
+    local_agent_mode: modeByHost.local ?? null,
+    has_user_changed_service_tier:
+      persisted["has-user-changed-service-tier"] ?? null,
+  };
+}
+
 function buildState(state) {
-  const next = state && typeof state === "object" && !Array.isArray(state) ? state : {};
+  const next =
+    state && typeof state === "object" && !Array.isArray(state) ? state : {};
   const persisted =
     next["electron-persisted-atom-state"] &&
     typeof next["electron-persisted-atom-state"] === "object" &&
@@ -194,30 +297,50 @@ function buildState(state) {
 }
 
 function syncConfig() {
-  return writeTextAtomicallyIfChanged(
-    configPath,
-    buildConfig(readText(configPath)),
-    0o600,
-  );
+  const before = readText(configPath);
+  const after = buildConfig(before);
+  return {
+    path: configPath,
+    changed: writeTextAtomicallyIfChanged(configPath, after, 0o600),
+    before: summarizeConfig(before),
+    after: summarizeConfig(after),
+  };
 }
 
-function syncStateFile(filePath) {
-  return writeTextAtomicallyIfChanged(
-    filePath,
-    `${JSON.stringify(buildState(readState(filePath)), null, 2)}\n`,
-    0o600,
-  );
+function syncStateFile(filePath, fallbackPath) {
+  const beforeState = readStateOrEmpty(filePath, fallbackPath);
+  const afterState = buildState(beforeState);
+  return {
+    path: filePath,
+    changed: writeTextAtomicallyIfChanged(
+      filePath,
+      `${JSON.stringify(afterState, null, 2)}\n`,
+      0o600,
+    ),
+    before: summarizeState(beforeState),
+    after: summarizeState(afterState),
+  };
+}
+
+function formatResult(result) {
+  return `${path.basename(result.path)} before=${JSON.stringify(
+    result.before,
+  )} after=${JSON.stringify(result.after)}`;
 }
 
 function main() {
-  let changed = false;
-  changed = syncConfig() || changed;
-  changed = syncStateFile(statePath) || changed;
-  if (fs.existsSync(stateBackupPath)) {
-    changed = syncStateFile(stateBackupPath) || changed;
-  }
-  if (changed) {
-    console.log(`Synced Codex launch defaults in ${codexHome}`);
+  const results = [
+    syncConfig(),
+    syncStateFile(statePath, stateBackupPath),
+    syncStateFile(stateBackupPath, statePath),
+  ];
+  const changedResults = results.filter((result) => result.changed);
+  if (changedResults.length > 0) {
+    console.log(
+      `${isoNow()} Synced Codex launch defaults in ${codexHome}: ${changedResults
+        .map(formatResult)
+        .join("; ")}`,
+    );
   }
 }
 

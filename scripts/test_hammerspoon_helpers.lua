@@ -470,6 +470,7 @@ end
 local codexAppToggler, getCodexLaunchResult = createCodexLaunchFixture()
 assertEqual(type(codexAppToggler._codexDesktopStateForTest), "function", "Codex app launch exposes Desktop state sync helper for regression tests")
 assertEqual(type(codexAppToggler._codexConfigForTest), "function", "Codex app launch exposes config sync helper for regression tests")
+assertEqual(type(codexAppToggler._codexLaunchMarkerPathForTest), "function", "Codex app launch exposes marker path helper for regression tests")
 assertEqual(type(codexAppToggler._syncCodexDesktopStateForTest), "function", "Codex app launch exposes Desktop state writer for live verification")
 local desktopState = codexAppToggler._codexDesktopStateForTest({
     ["electron-persisted-atom-state"] = {
