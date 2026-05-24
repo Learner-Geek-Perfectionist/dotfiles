@@ -6,6 +6,27 @@ local toggleHints = {
     ["com.mac.utility.clipboard.paste"] = "uPaste",
 }
 
+local codexBundleID = "com.openai.codex"
+local codexCliPath = "/opt/homebrew/bin/codex"
+local codexLaunchPath = "/usr/bin/env"
+local codexLaunchEnvPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+local codexFixedConfigArgs = {
+    "-c", 'model="gpt-5.5"',
+    "-c", "model_context_window=1050000",
+    "-c", "model_auto_compact_token_limit=900000",
+    "-c", 'model_reasoning_effort="xhigh"',
+    "-c", 'model_reasoning_summary="detailed"',
+    "-c", 'model_verbosity="low"',
+    "-c", 'approvals_reviewer="guardian_subagent"',
+    "-c", 'approval_policy="never"',
+    "-c", 'sandbox_mode="danger-full-access"',
+    "-c", 'file_opener="vscode"',
+    "-c", "hide_agent_reasoning=false",
+    "-c", "show_raw_agent_reasoning=false",
+    "-c", "suppress_unstable_features_warning=true",
+    "-c", 'service_tier="fast"',
+}
+
 local function showToggleHint(bundleID)
     local message = toggleHints[bundleID]
     if message and hs.alert and hs.alert.show then
@@ -37,7 +58,35 @@ local function shellQuote(value)
     return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
 end
 
+local function codexWorkspace()
+    return os.getenv("HOME") or "~"
+end
+
+local function openCodexApp()
+    if not hs.task or not hs.task.new then
+        hs.execute("/usr/bin/env -u NO_COLOR /usr/bin/open -b " .. shellQuote(codexBundleID), true)
+        return
+    end
+
+    local args = { "-u", "NO_COLOR", "PATH=" .. codexLaunchEnvPath, codexCliPath, "app" }
+    for _, arg in ipairs(codexFixedConfigArgs) do
+        table.insert(args, arg)
+    end
+    table.insert(args, codexWorkspace())
+
+    hs.task.new(codexLaunchPath, function(exitCode, _, stdErr)
+        if exitCode ~= 0 and hs.alert and hs.alert.show then
+            hs.alert.show("Codex launch failed: " .. tostring(stdErr or ""))
+        end
+    end, args):start()
+end
+
 local function openApp(bundleID)
+    if bundleID == codexBundleID then
+        openCodexApp()
+        return
+    end
+
     hs.execute("/usr/bin/env -u NO_COLOR /usr/bin/open -b " .. shellQuote(bundleID), true)
 end
 

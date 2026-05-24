@@ -413,6 +413,78 @@ local openedCommand, launchOrFocusCalled = getMissingAppLaunchResult()
 assertEqual(openedCommand, "/usr/bin/env -u NO_COLOR /usr/bin/open -b 'net.kovidgoyal.kitty'", "missing app launch strips inherited NO_COLOR")
 assertTrue(not launchOrFocusCalled, "missing app launch avoids Hammerspoon launchOrFocus inherited environment")
 
+local function createCodexLaunchFixture()
+    local taskPath = nil
+    local taskArgs = nil
+    local taskStarted = false
+    local executeCommand = nil
+    local fakeScreen = {}
+
+    hs = {
+        application = {
+            get = function()
+                return nil
+            end,
+            launchOrFocusByBundleID = function() end,
+        },
+        execute = function(command)
+            executeCommand = command
+        end,
+        mouse = {
+            getCurrentScreen = function()
+                return fakeScreen
+            end,
+        },
+        screen = {
+            mainScreen = function()
+                return fakeScreen
+            end,
+        },
+        task = {
+            new = function(path, callback, args)
+                taskPath = path
+                taskArgs = args
+                return {
+                    start = function()
+                        taskStarted = true
+                    end,
+                }
+            end,
+        },
+        timer = {
+            doAfter = function() end,
+        },
+        window = {
+            focusedWindow = function()
+                return nil
+            end,
+        },
+    }
+
+    package.loaded["modules.AppToggler"] = nil
+    return require("modules.AppToggler"), function()
+        return taskPath, taskArgs, taskStarted, executeCommand
+    end
+end
+
+local codexAppToggler, getCodexLaunchResult = createCodexLaunchFixture()
+codexAppToggler.toggle("com.openai.codex")
+local codexTaskPath, codexTaskArgs, codexTaskStarted, codexExecuteCommand = getCodexLaunchResult()
+local codexTaskArgText = table.concat(codexTaskArgs or {}, "\n")
+assertEqual(codexTaskPath, "/usr/bin/env", "Codex app launch controls the CLI environment")
+assertTrue(codexTaskStarted, "Codex app task is started")
+assertEqual(codexTaskArgs[1], "-u", "Codex app launch clears inherited NO_COLOR")
+assertEqual(codexTaskArgs[2], "NO_COLOR", "Codex app launch clears inherited NO_COLOR")
+assertTrue(codexTaskArgs[3]:find("^PATH=/opt/homebrew/bin:"), "Codex app launch includes Homebrew node on PATH")
+assertEqual(codexTaskArgs[4], "/opt/homebrew/bin/codex", "Codex app launches through the Codex CLI")
+assertEqual(codexTaskArgs[5], "app", "Codex app launch uses the app subcommand")
+assertEqual(codexTaskArgs[#codexTaskArgs], os.getenv("HOME") or "~", "Codex app launch defaults to HOME workspace")
+assertTrue(not codexExecuteCommand, "Codex app launch avoids shell-quoted open")
+assertTrue(codexTaskArgText:find('model="gpt-5.5"', 1, true), "Codex app launch pins model")
+assertTrue(codexTaskArgText:find('approvals_reviewer="guardian_subagent"', 1, true), "Codex app launch pins approvals reviewer")
+assertTrue(codexTaskArgText:find('service_tier="fast"', 1, true), "Codex app launch pins service tier")
+assertTrue(codexTaskArgText:find('sandbox_mode="danger-full-access"', 1, true), "Codex app launch pins sandbox mode")
+
 local function createAgentAppAlertFixture()
     local alertMessage = nil
     local fakeScreen = {}

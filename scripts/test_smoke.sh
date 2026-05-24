@@ -1037,6 +1037,51 @@ EOF
 	assert_equal "-R $tmp_home/.zshrc" "$second_call" "path reveal open call"
 }
 
+test_zsh_codex_wrapper_pins_interactive_launches() {
+	local tmp_home fake_bin codex_log first_call second_call third_call
+	tmp_home=$(make_temp_dir)
+	fake_bin=$(make_temp_dir)
+	codex_log="$tmp_home/codex.log"
+	trap "rm -rf '$tmp_home' '$fake_bin'" RETURN
+
+	cp "$REPO_ROOT/.zshenv" "$tmp_home/.zshenv"
+	cp "$REPO_ROOT/.zshrc" "$tmp_home/.zshrc"
+
+	cat >"$fake_bin/codex" <<'EOF'
+#!/bin/sh
+printf 'CALL\n' >>"$HOME/codex.log"
+for arg in "$@"; do
+	printf '[%s]\n' "$arg" >>"$HOME/codex.log"
+done
+EOF
+	chmod +x "$fake_bin/codex"
+
+	if ! HOME="$tmp_home" PATH="$fake_bin:/usr/bin:/bin:/usr/sbin:/sbin" TERM="xterm-256color" \
+		zsh -ic 'codex "hello world"; codex app "$HOME"; codex exec "skip"' >/dev/null 2>&1; then
+		fail "zsh codex wrapper fixture failed"
+	fi
+
+	first_call="$tmp_home/codex-call-1.log"
+	second_call="$tmp_home/codex-call-2.log"
+	third_call="$tmp_home/codex-call-3.log"
+	awk 'BEGIN { n = 0 } /^CALL$/ { n++; next } n == 1 { print }' "$codex_log" >"$first_call"
+	awk 'BEGIN { n = 0 } /^CALL$/ { n++; next } n == 2 { print }' "$codex_log" >"$second_call"
+	awk 'BEGIN { n = 0 } /^CALL$/ { n++; next } n == 3 { print }' "$codex_log" >"$third_call"
+
+	assert_contains '[model="gpt-5.5"]' "$first_call"
+	assert_contains '[model_reasoning_effort="xhigh"]' "$first_call"
+	assert_contains '[service_tier="fast"]' "$first_call"
+	assert_contains '[hello world]' "$first_call"
+
+	assert_contains '[app]' "$second_call"
+	assert_contains '[model="gpt-5.5"]' "$second_call"
+	assert_contains '[sandbox_mode="danger-full-access"]' "$second_call"
+
+	assert_contains '[exec]' "$third_call"
+	assert_not_contains '[model="gpt-5.5"]' "$third_call"
+	assert_not_contains '[service_tier="fast"]' "$third_call"
+}
+
 test_zshrc_does_not_reload_zinit_plugins_when_resourced() {
 	local tmp_home load_count
 	tmp_home=$(make_temp_dir)
@@ -3381,6 +3426,7 @@ run_test "superpowers pull does not retry GitHub SSH failures" test_superpowers_
 run_test "Dotfiles pre-cleans stale zinit completions" test_dotfiles_precleans_zinit_stale_completions
 run_test "Dotfiles warns when zinit plugin sync fails" test_dotfiles_warns_when_zinit_plugin_sync_fails
 run_test "zsh open wrapper preserves Codex deep links" test_zsh_open_wrapper_preserves_codex_deep_links
+run_test "zsh codex wrapper pins interactive launches" test_zsh_codex_wrapper_pins_interactive_launches
 run_test "zshrc does not reload zinit plugins when re-sourced" test_zshrc_does_not_reload_zinit_plugins_when_resourced
 run_test "zshrc detects preloaded zinit without re-sourcing plugin stack" test_zshrc_detects_preloaded_zinit_without_resourcing_plugin_stack
 run_test "zshrc kitty ssh wrapper defaults to kitten and supports opt-out" test_zshrc_kitty_ssh_wrapper_defaults_to_kitten_and_supports_opt_out
