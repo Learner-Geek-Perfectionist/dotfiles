@@ -25,6 +25,10 @@ local codexFixedConfigArgs = {
     "-c", "show_raw_agent_reasoning=false",
     "-c", "suppress_unstable_features_warning=true",
     "-c", 'service_tier="fast"',
+    "-c", 'desktop.default-service-tier="priority"',
+    "-c", 'desktop.localeOverride="zh-CN"',
+    "-c", "desktop.preventSleepWhileRunning=true",
+    "-c", 'desktop.conversationDetailMode="STEPS_COMMANDS"',
 }
 
 local function showToggleHint(bundleID)
@@ -62,7 +66,119 @@ local function codexWorkspace()
     return os.getenv("HOME") or "~"
 end
 
+local function codexStatePath()
+    local codexHome = os.getenv("CODEX_HOME")
+    if codexHome and codexHome ~= "" then
+        return codexHome .. "/.codex-global-state.json"
+    end
+
+    local home = os.getenv("HOME")
+    if not home or home == "" then
+        return nil
+    end
+
+    return home .. "/.codex/.codex-global-state.json"
+end
+
+local function buildCodexDesktopState(state)
+    if type(state) ~= "table" then
+        state = {}
+    end
+
+    local persistedAtomState = state["electron-persisted-atom-state"]
+    if type(persistedAtomState) ~= "table" then
+        persistedAtomState = {}
+        state["electron-persisted-atom-state"] = persistedAtomState
+    end
+
+    local agentModeByHostID = persistedAtomState["agent-mode-by-host-id"]
+    if type(agentModeByHostID) ~= "table" then
+        agentModeByHostID = {}
+        persistedAtomState["agent-mode-by-host-id"] = agentModeByHostID
+    end
+
+    -- Codex Desktop stores the "fast" UI selection as the internal tier "priority".
+    persistedAtomState["default-service-tier"] = "priority"
+    persistedAtomState["has-user-changed-service-tier"] = true
+    persistedAtomState["has-seen-fast-mode-announcement"] = true
+    persistedAtomState["skip-full-access-confirm"] = true
+    agentModeByHostID["local"] = "full-access"
+
+    return state
+end
+
+local function readFile(path)
+    local handle, err = io.open(path, "r")
+    if not handle then
+        return nil, err
+    end
+
+    local content = handle:read("*a")
+    handle:close()
+    return content
+end
+
+local function writeFileAtomically(path, content)
+    local tmpPath = path .. ".tmp"
+    local handle, err = io.open(tmpPath, "w")
+    if not handle then
+        return false, err
+    end
+
+    local ok, writeErr = handle:write(content)
+    local closeOk, closeErr = handle:close()
+    if not ok or not closeOk then
+        os.remove(tmpPath)
+        return false, writeErr or closeErr
+    end
+
+    local renameOk, renameErr = os.rename(tmpPath, path)
+    if not renameOk then
+        os.remove(tmpPath)
+        return false, renameErr
+    end
+
+    return true
+end
+
+local function syncCodexDesktopState()
+    if not hs.json or not hs.json.decode or not hs.json.encode then
+        return false, "hs.json unavailable"
+    end
+
+    local path = codexStatePath()
+    if not path then
+        return false, "CODEX_HOME/HOME unavailable"
+    end
+
+    local state = {}
+    local content, readErr = readFile(path)
+    if content and content ~= "" then
+        local decodeOk, decoded = pcall(hs.json.decode, content)
+        if not decodeOk or type(decoded) ~= "table" then
+            return false, "invalid state JSON"
+        end
+        state = decoded
+    elseif readErr and not tostring(readErr):find("No such file", 1, true) then
+        return false, readErr
+    end
+
+    state = buildCodexDesktopState(state)
+
+    local encodeOk, encoded = pcall(hs.json.encode, state)
+    if not encodeOk or type(encoded) ~= "string" then
+        return false, "state JSON encode failed"
+    end
+
+    return writeFileAtomically(path, encoded .. "\n")
+end
+
 local function openCodexApp()
+    local syncOk, syncErr = syncCodexDesktopState()
+    if not syncOk and hs.alert and hs.alert.show then
+        hs.alert.show("Codex UI state sync skipped: " .. tostring(syncErr or "unknown error"))
+    end
+
     if not hs.task or not hs.task.new then
         hs.execute("/usr/bin/env -u NO_COLOR /usr/bin/open -b " .. shellQuote(codexBundleID), true)
         return
@@ -189,5 +305,8 @@ function M.toggle(bundleID)
     openApp(bundleID)
     focusAppWindowOnScreen(bundleID, targetScreen, 15, false, false)
 end
+
+M._codexDesktopStateForTest = buildCodexDesktopState
+M._syncCodexDesktopStateForTest = syncCodexDesktopState
 
 return M
