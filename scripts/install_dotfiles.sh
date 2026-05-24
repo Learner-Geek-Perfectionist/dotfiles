@@ -1,7 +1,7 @@
 #!/bin/bash
 # shellcheck disable=SC2088
 # Dotfiles 配置安装脚本
-# 只同步明确列出的文件/目录，避免覆盖用户的其它配置
+# 只同步明确列出的文件/目录；目录按仓库镜像，显式合并逻辑单独实现
 
 set -euo pipefail
 
@@ -30,12 +30,13 @@ sync_directory_contents() {
 	mkdir -p "$dest"
 
 	if command -v rsync &>/dev/null; then
-		# 非破坏性合并：更新仓库内文件，但保留目标目录里的本机私有文件。
-		rsync -a "$src/" "$dest/"
+		rsync -a --delete "$src/" "$dest/"
 		return 0
 	fi
 
-	# 兜底：仅覆盖仓库提供的内容，不删除目标目录里的额外文件。
+	# 兜底：没有 rsync 时重建目标目录，保持目录复制的镜像语义。
+	rm -rf "$dest"
+	mkdir -p "$dest"
 	cp -PRf "$src/." "$dest/"
 }
 

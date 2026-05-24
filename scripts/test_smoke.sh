@@ -873,6 +873,62 @@ EOF
 	assert_not_contains 'Wide character in print' "$log"
 }
 
+test_dotfiles_mirrors_copied_directories() {
+	local tmp_home fake_bin log superpowers_repo
+	tmp_home=$(make_temp_dir)
+	fake_bin=$(make_temp_dir)
+	log="$tmp_home/install-dotfiles.log"
+	superpowers_repo=$(make_fake_superpowers_repo)
+	trap "rm -rf '$tmp_home' '$fake_bin' '$superpowers_repo'" RETURN
+
+	mkdir -p "$tmp_home/.hammerspoon/modules" "$tmp_home/.config/karabiner/automatic_backups"
+	printf '%s\n' 'stale hammerspoon module' >"$tmp_home/.hammerspoon/modules/inputMethodToggle.lua"
+	printf '%s\n' 'stale karabiner backup' >"$tmp_home/.config/karabiner/automatic_backups/stale.json"
+
+	cat >"$fake_bin/uname" <<'EOF'
+#!/bin/sh
+printf '%s\n' "Darwin"
+EOF
+	cat >"$fake_bin/plutil" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-extract" ]; then
+	case "$2" in
+	AppleEnabledInputSources)
+		printf '%s\n' '[]'
+		;;
+	AppleSelectedInputSources|AppleInputSourceHistory)
+		printf '%s\n' '[]'
+		;;
+	AppleCurrentKeyboardLayoutInputSourceID)
+		printf '%s\n' ''
+		;;
+	*)
+		exit 1
+		;;
+	esac
+	exit 0
+fi
+exit 1
+EOF
+	cat >"$fake_bin/zsh" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+	cat >"$fake_bin/keychain" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+	chmod +x "$fake_bin/uname" "$fake_bin/plutil" "$fake_bin/zsh" "$fake_bin/keychain"
+
+	if ! run_dotfiles_install "$tmp_home" "$fake_bin" "$superpowers_repo" "$log"; then
+		cat "$log" >&2
+		fail "install_dotfiles.sh copied-directory mirror test failed"
+	fi
+
+	assert_file_missing "$tmp_home/.hammerspoon/modules/inputMethodToggle.lua"
+	assert_file_missing "$tmp_home/.config/karabiner/automatic_backups/stale.json"
+}
+
 test_dotfiles_wetype_karabiner_patching_fails_closed_on_malformed_click_rule() {
 	local tmp_dir karabiner_file log
 	tmp_dir=$(make_temp_dir)
@@ -3449,6 +3505,7 @@ run_test "Dotfiles warns when macOS IME provider is disabled" test_dotfiles_warn
 run_test "Dotfiles generates apple_pair Karabiner profile" test_dotfiles_generates_apple_pair_karabiner_profile
 run_test "Dotfiles generates wetype Karabiner profile from HIToolbox state" test_dotfiles_generates_wetype_karabiner_profile_from_hitoolbox_state
 run_test "Dotfiles generates disabled Karabiner without IME rules" test_dotfiles_generates_disabled_karabiner_without_ime_rules
+run_test "Dotfiles mirrors copied directories" test_dotfiles_mirrors_copied_directories
 run_test "Dotfiles wetype Karabiner patching fails closed on malformed click rule" test_dotfiles_wetype_karabiner_patching_fails_closed_on_malformed_click_rule
 run_test "superpowers clone does not retry GitHub SSH failures" test_superpowers_clone_does_not_retry_github_ssh_failures
 run_test "superpowers pull does not retry GitHub SSH failures" test_superpowers_pull_does_not_retry_github_ssh_failures
