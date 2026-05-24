@@ -484,7 +484,7 @@ local desktopState = codexAppToggler._codexDesktopStateForTest({
     ["unrelated-root-key"] = "preserved",
 })
 local persistedAtomState = desktopState["electron-persisted-atom-state"]
-assertEqual(persistedAtomState["default-service-tier"], "priority", "Desktop UI speed is pinned to fast mode's internal tier")
+assertEqual(persistedAtomState["default-service-tier"], "fast", "Desktop UI speed is pinned to fast")
 assertTrue(persistedAtomState["has-user-changed-service-tier"], "Desktop UI treats the pinned speed as an explicit user setting")
 assertTrue(persistedAtomState["has-seen-fast-mode-announcement"], "Desktop UI does not reopen the fast-mode announcement")
 assertTrue(persistedAtomState["skip-full-access-confirm"], "Desktop UI does not reopen the full-access confirmation")
@@ -507,11 +507,105 @@ assertTrue(not codexExecuteCommand, "Codex app launch avoids shell-quoted open")
 assertTrue(codexTaskArgText:find('model="gpt-5.5"', 1, true), "Codex app launch pins model")
 assertTrue(codexTaskArgText:find('approvals_reviewer="guardian_subagent"', 1, true), "Codex app launch pins approvals reviewer")
 assertTrue(codexTaskArgText:find('service_tier="fast"', 1, true), "Codex app launch pins service tier")
-assertTrue(codexTaskArgText:find('desktop.default-service-tier="priority"', 1, true), "Codex app launch pins Desktop UI service tier")
+assertTrue(codexTaskArgText:find('desktop.default-service-tier="fast"', 1, true), "Codex app launch pins Desktop UI service tier")
 assertTrue(codexTaskArgText:find('desktop.localeOverride="zh-CN"', 1, true), "Codex app launch pins Desktop UI language")
 assertTrue(codexTaskArgText:find("desktop.preventSleepWhileRunning=true", 1, true), "Codex app launch pins Desktop prevent-sleep setting")
 assertTrue(codexTaskArgText:find('desktop.conversationDetailMode="STEPS_COMMANDS"', 1, true), "Codex app launch pins Desktop programming detail mode")
 assertTrue(codexTaskArgText:find('sandbox_mode="danger-full-access"', 1, true), "Codex app launch pins sandbox mode")
+
+local function createRunningCodexLaunchFixture()
+    local taskStarted = false
+    local windowFocused = false
+    local fakeScreen = {}
+    local fakeWindow = {
+        isStandard = function()
+            return true
+        end,
+        isMinimized = function()
+            return false
+        end,
+        screen = function()
+            return fakeScreen
+        end,
+        focus = function()
+            windowFocused = true
+        end,
+    }
+    local fakeApp = {
+        focusedWindow = function()
+            return fakeWindow
+        end,
+        mainWindow = function()
+            return fakeWindow
+        end,
+        allWindows = function()
+            return { fakeWindow }
+        end,
+        isHidden = function()
+            return false
+        end,
+        isFrontmost = function()
+            return false
+        end,
+    }
+
+    hs = {
+        application = {
+            get = function(bundleID)
+                return bundleID == "com.openai.codex" and fakeApp or nil
+            end,
+            launchOrFocusByBundleID = function() end,
+        },
+        fnutils = {
+            find = function(items, predicate)
+                for _, item in ipairs(items) do
+                    if predicate(item) then
+                        return item
+                    end
+                end
+                return nil
+            end,
+        },
+        mouse = {
+            getCurrentScreen = function()
+                return fakeScreen
+            end,
+        },
+        screen = {
+            mainScreen = function()
+                return fakeScreen
+            end,
+        },
+        task = {
+            new = function()
+                return {
+                    start = function()
+                        taskStarted = true
+                    end,
+                }
+            end,
+        },
+        timer = {
+            doAfter = function() end,
+        },
+        window = {
+            focusedWindow = function()
+                return nil
+            end,
+        },
+    }
+
+    package.loaded["modules.AppToggler"] = nil
+    return require("modules.AppToggler"), function()
+        return taskStarted, windowFocused
+    end
+end
+
+local runningCodexAppToggler, getRunningCodexLaunchResult = createRunningCodexLaunchFixture()
+runningCodexAppToggler.toggle("com.openai.codex")
+local runningCodexTaskStarted, runningCodexWindowFocused = getRunningCodexLaunchResult()
+assertTrue(runningCodexTaskStarted, "Codex hotkey replays pinned launch args even when Codex is already running in the background")
+assertTrue(runningCodexWindowFocused, "Codex hotkey still focuses an existing background window")
 
 local function createAgentAppAlertFixture()
     local alertMessage = nil

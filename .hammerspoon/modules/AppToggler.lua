@@ -25,7 +25,7 @@ local codexFixedConfigArgs = {
     "-c", "show_raw_agent_reasoning=false",
     "-c", "suppress_unstable_features_warning=true",
     "-c", 'service_tier="fast"',
-    "-c", 'desktop.default-service-tier="priority"',
+    "-c", 'desktop.default-service-tier="fast"',
     "-c", 'desktop.localeOverride="zh-CN"',
     "-c", "desktop.preventSleepWhileRunning=true",
     "-c", 'desktop.conversationDetailMode="STEPS_COMMANDS"',
@@ -97,8 +97,7 @@ local function buildCodexDesktopState(state)
         persistedAtomState["agent-mode-by-host-id"] = agentModeByHostID
     end
 
-    -- Codex Desktop stores the "fast" UI selection as the internal tier "priority".
-    persistedAtomState["default-service-tier"] = "priority"
+    persistedAtomState["default-service-tier"] = "fast"
     persistedAtomState["has-user-changed-service-tier"] = true
     persistedAtomState["has-seen-fast-mode-announcement"] = true
     persistedAtomState["skip-full-access-confirm"] = true
@@ -298,7 +297,12 @@ function M.toggle(bundleID)
     local targetScreen = getTargetScreen()
 
     if app then
-        focusAppWindowOnScreen(bundleID, targetScreen, 10, false, false)
+        local reopenAttempted = false
+        if bundleID == codexBundleID then
+            openCodexApp()
+            reopenAttempted = true
+        end
+        focusAppWindowOnScreen(bundleID, targetScreen, 10, reopenAttempted, false)
         return
     end
 

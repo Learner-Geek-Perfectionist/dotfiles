@@ -84,6 +84,14 @@ enabled = true
 [plugins."chrome@openai-bundled"]
 enabled = true
 
+[desktop]
+localeOverride = "zh-CN"
+hotkey-window-projectless-default-enabled = false
+preventSleepWhileRunning = true
+codeFontSize = 12
+conversationDetailMode = "STEPS_COMMANDS"
+default-service-tier = "fast"
+
 [desktop.open-in-target-preferences]
 global = "vscode"
 
