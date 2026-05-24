@@ -1071,22 +1071,23 @@ EOF
 	assert_contains '[model="gpt-5.5"]' "$first_call"
 	assert_contains '[model_reasoning_effort="xhigh"]' "$first_call"
 	assert_contains '[service_tier="fast"]' "$first_call"
-	assert_contains '[desktop.default-service-tier="fast"]' "$first_call"
+	assert_contains '[desktop.default-service-tier="priority"]' "$first_call"
 	assert_contains '[hello world]' "$first_call"
 
 	assert_contains '[app]' "$second_call"
 	assert_contains '[model="gpt-5.5"]' "$second_call"
 	assert_contains '[sandbox_mode="danger-full-access"]' "$second_call"
-	assert_contains '[desktop.default-service-tier="fast"]' "$second_call"
+	assert_contains '[desktop.default-service-tier="priority"]' "$second_call"
 
 	assert_contains '[exec]' "$third_call"
 	assert_not_contains '[model="gpt-5.5"]' "$third_call"
 	assert_not_contains '[service_tier="fast"]' "$third_call"
-	assert_not_contains '[desktop.default-service-tier="fast"]' "$third_call"
+	assert_not_contains '[desktop.default-service-tier="priority"]' "$third_call"
 }
 
 test_codex_launch_defaults_sync_script_pins_config_and_desktop_state() {
-	local tmp_home tmp_codex config state state_bak state_check
+	local tmp_home tmp_codex config state state_bak state_check second_log
+	local config_mtime state_mtime state_bak_mtime
 
 	if ! command -v node >/dev/null 2>&1; then
 		warn "node missing; skipping Codex launch defaults sync script test"
@@ -1099,6 +1100,7 @@ test_codex_launch_defaults_sync_script_pins_config_and_desktop_state() {
 	state="$tmp_codex/.codex-global-state.json"
 	state_bak="$state.bak"
 	state_check="$tmp_home/state-check.json"
+	second_log="$tmp_home/sync-second.log"
 	trap "rm -rf '$tmp_home'" RETURN
 
 	mkdir -p "$tmp_codex"
@@ -1144,7 +1146,7 @@ EOF
 	assert_contains 'localeOverride = "zh-CN"' "$config"
 	assert_contains 'preventSleepWhileRunning = true' "$config"
 	assert_contains 'conversationDetailMode = "STEPS_COMMANDS"' "$config"
-	assert_contains 'default-service-tier = "fast"' "$config"
+	assert_contains 'default-service-tier = "priority"' "$config"
 	assert_contains 'global = "vscode"' "$config"
 
 	node - "$state" "$state_bak" >"$state_check" <<'NODE'
@@ -1153,7 +1155,7 @@ const [statePath, backupPath] = process.argv.slice(2);
 for (const filePath of [statePath, backupPath]) {
   const state = JSON.parse(fs.readFileSync(filePath, "utf8"));
   const atom = state["electron-persisted-atom-state"];
-  if (atom["default-service-tier"] !== "fast") throw new Error(`${filePath}: speed not fast`);
+  if (atom["default-service-tier"] !== "priority") throw new Error(`${filePath}: speed not priority`);
   if (atom["has-user-changed-service-tier"] !== true) throw new Error(`${filePath}: speed not marked user-set`);
   if (atom["has-seen-fast-mode-announcement"] !== true) throw new Error(`${filePath}: announcement not acknowledged`);
   if (atom["skip-full-access-confirm"] !== true) throw new Error(`${filePath}: full-access prompt not skipped`);
@@ -1165,6 +1167,16 @@ for (const filePath of [statePath, backupPath]) {
 console.log("ok");
 NODE
 	assert_contains "ok" "$state_check"
+
+	config_mtime="$(file_mtime "$config")"
+	state_mtime="$(file_mtime "$state")"
+	state_bak_mtime="$(file_mtime "$state_bak")"
+	sleep 1
+	CODEX_HOME="$tmp_codex" HOME="$tmp_home" node "$REPO_ROOT/scripts/sync_codex_launch_defaults.js" >"$second_log"
+	assert_not_contains "Synced Codex launch defaults" "$second_log"
+	assert_equal "$config_mtime" "$(file_mtime "$config")" "config mtime after idempotent sync"
+	assert_equal "$state_mtime" "$(file_mtime "$state")" "state mtime after idempotent sync"
+	assert_equal "$state_bak_mtime" "$(file_mtime "$state_bak")" "state backup mtime after idempotent sync"
 }
 
 test_zshrc_does_not_reload_zinit_plugins_when_resourced() {

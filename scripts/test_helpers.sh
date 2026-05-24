@@ -115,6 +115,17 @@ file_mode() {
 	stat -c %a "$path"
 }
 
+file_mtime() {
+	local path="$1"
+
+	if stat -f %m "$path" >/dev/null 2>&1; then
+		stat -f %m "$path"
+		return 0
+	fi
+
+	stat -c %Y "$path"
+}
+
 assert_mode() {
 	local expected="$1" path="$2" actual
 	actual="$(file_mode "$path")"

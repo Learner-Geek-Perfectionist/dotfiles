@@ -26,7 +26,9 @@ const desktopDefaults = [
   ["localeOverride", '"zh-CN"'],
   ["preventSleepWhileRunning", "true"],
   ["conversationDetailMode", '"STEPS_COMMANDS"'],
-  ["default-service-tier", '"fast"'],
+  // Codex.app currently exposes the Fast menu item as service tier id
+  // "priority" for GPT-5.5. Runtime config still uses service_tier="fast".
+  ["default-service-tier", '"priority"'],
 ];
 
 const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
@@ -53,6 +55,14 @@ function writeTextAtomically(filePath, content, mode) {
   if (mode != null) {
     fs.chmodSync(filePath, mode);
   }
+}
+
+function writeTextAtomicallyIfChanged(filePath, content, mode) {
+  if (readText(filePath) === content) {
+    return false;
+  }
+  writeTextAtomically(filePath, content, mode);
+  return true;
 }
 
 function escapeRegExp(value) {
@@ -174,7 +184,7 @@ function buildState(state) {
       : {};
   persisted["agent-mode-by-host-id"] = modeByHost;
 
-  persisted["default-service-tier"] = "fast";
+  persisted["default-service-tier"] = "priority";
   persisted["has-user-changed-service-tier"] = true;
   persisted["has-seen-fast-mode-announcement"] = true;
   persisted["skip-full-access-confirm"] = true;
@@ -184,11 +194,15 @@ function buildState(state) {
 }
 
 function syncConfig() {
-  writeTextAtomically(configPath, buildConfig(readText(configPath)), 0o600);
+  return writeTextAtomicallyIfChanged(
+    configPath,
+    buildConfig(readText(configPath)),
+    0o600,
+  );
 }
 
 function syncStateFile(filePath) {
-  writeTextAtomically(
+  return writeTextAtomicallyIfChanged(
     filePath,
     `${JSON.stringify(buildState(readState(filePath)), null, 2)}\n`,
     0o600,
@@ -196,12 +210,15 @@ function syncStateFile(filePath) {
 }
 
 function main() {
-  syncConfig();
-  syncStateFile(statePath);
+  let changed = false;
+  changed = syncConfig() || changed;
+  changed = syncStateFile(statePath) || changed;
   if (fs.existsSync(stateBackupPath)) {
-    syncStateFile(stateBackupPath);
+    changed = syncStateFile(stateBackupPath) || changed;
   }
-  console.log(`Synced Codex launch defaults in ${codexHome}`);
+  if (changed) {
+    console.log(`Synced Codex launch defaults in ${codexHome}`);
+  }
 }
 
 main();
