@@ -175,22 +175,6 @@ _deploy_codex_config() {
 
 	if bash "$SCRIPT_DIR/deploy_codex_config.sh" "$codex_src" "$codex_dest" "$HOME"; then
 		dotfiles_manifest_add_file "$codex_dest"
-		if command -v node >/dev/null 2>&1 && [[ -f "$SCRIPT_DIR/sync_codex_launch_defaults.js" ]]; then
-			if CODEX_HOME="$HOME/.codex" node "$SCRIPT_DIR/sync_codex_launch_defaults.js" >/dev/null; then
-				print_success "~/.codex/.codex-global-state.json"
-			else
-				print_warn "无法同步 Codex Desktop UI 启动状态，跳过"
-			fi
-		else
-			print_warn "未找到 node，跳过 Codex Desktop UI 启动状态同步"
-		fi
-		if [[ -x "$SCRIPT_DIR/install_codex_launch_defaults_agent.sh" ]]; then
-			if bash "$SCRIPT_DIR/install_codex_launch_defaults_agent.sh" >/dev/null; then
-				print_success "Codex 启动默认值 LaunchAgent"
-			else
-				print_warn "无法配置 Codex 启动默认值 LaunchAgent，跳过"
-			fi
-		fi
 		print_success "~/.codex/config.toml"
 		[[ -n "${GITHUB_PERSONAL_ACCESS_TOKEN:-}" ]] || print_warn "GitHub MCP 已写入 ~/.codex/config.toml，但未检测到 GITHUB_PERSONAL_ACCESS_TOKEN"
 		[[ -n "${TAVILY_API_KEY:-}" ]] || print_warn "Tavily MCP 已写入 ~/.codex/config.toml，但未检测到 TAVILY_API_KEY"
