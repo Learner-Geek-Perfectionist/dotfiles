@@ -90,7 +90,7 @@ hotkey-window-projectless-default-enabled = false
 preventSleepWhileRunning = true
 codeFontSize = 12
 conversationDetailMode = "STEPS_COMMANDS"
-default-service-tier = "fast"
+default-service-tier = "priority"
 
 [desktop.open-in-target-preferences]
 global = "vscode"

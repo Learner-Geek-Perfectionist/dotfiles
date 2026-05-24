@@ -10,6 +10,8 @@ local codexBundleID = "com.openai.codex"
 local codexCliPath = "/opt/homebrew/bin/codex"
 local codexLaunchPath = "/usr/bin/env"
 local codexLaunchEnvPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+local codexRuntimeServiceTier = "fast"
+local codexDesktopServiceTier = "priority"
 local codexFixedConfigArgs = {
     "-c", 'model="gpt-5.5"',
     "-c", "model_context_window=1050000",
@@ -24,8 +26,8 @@ local codexFixedConfigArgs = {
     "-c", "hide_agent_reasoning=false",
     "-c", "show_raw_agent_reasoning=false",
     "-c", "suppress_unstable_features_warning=true",
-    "-c", 'service_tier="fast"',
-    "-c", 'desktop.default-service-tier="fast"',
+    "-c", 'service_tier="' .. codexRuntimeServiceTier .. '"',
+    "-c", 'desktop.default-service-tier="' .. codexDesktopServiceTier .. '"',
     "-c", 'desktop.localeOverride="zh-CN"',
     "-c", "desktop.preventSleepWhileRunning=true",
     "-c", 'desktop.conversationDetailMode="STEPS_COMMANDS"',
@@ -80,6 +82,20 @@ local function codexStatePath()
     return home .. "/.codex/.codex-global-state.json"
 end
 
+local function codexConfigPath()
+    local codexHome = os.getenv("CODEX_HOME")
+    if codexHome and codexHome ~= "" then
+        return codexHome .. "/config.toml"
+    end
+
+    local home = os.getenv("HOME")
+    if not home or home == "" then
+        return nil
+    end
+
+    return home .. "/.codex/config.toml"
+end
+
 local function buildCodexDesktopState(state)
     if type(state) ~= "table" then
         state = {}
@@ -97,13 +113,103 @@ local function buildCodexDesktopState(state)
         persistedAtomState["agent-mode-by-host-id"] = agentModeByHostID
     end
 
-    persistedAtomState["default-service-tier"] = "fast"
+    persistedAtomState["default-service-tier"] = codexDesktopServiceTier
     persistedAtomState["has-user-changed-service-tier"] = true
     persistedAtomState["has-seen-fast-mode-announcement"] = true
     persistedAtomState["skip-full-access-confirm"] = true
     agentModeByHostID["local"] = "full-access"
 
     return state
+end
+
+local function escapeLuaPattern(value)
+    return tostring(value):gsub("([^%w])", "%%%1")
+end
+
+local function splitLines(content)
+    local lines = {}
+    content = tostring(content or ""):gsub("\r\n", "\n")
+    if content == "" then
+        return lines
+    end
+    if content:sub(-1) ~= "\n" then
+        content = content .. "\n"
+    end
+    for line in content:gmatch("(.-)\n") do
+        table.insert(lines, line)
+    end
+    return lines
+end
+
+local function joinLines(lines)
+    return table.concat(lines, "\n") .. "\n"
+end
+
+local function upsertTomlKey(content, sectionName, key, valueLiteral)
+    local lines = splitLines(content)
+    local escapedKey = escapeLuaPattern(key)
+    local firstSectionIndex = nil
+    local targetStart = nil
+    local targetEnd = nil
+
+    if sectionName == nil then
+        targetStart = 1
+    end
+
+    for index, line in ipairs(lines) do
+        local header = line:match("^%s*%[([^%]]+)%]%s*$")
+        if header then
+            firstSectionIndex = firstSectionIndex or index
+            if sectionName == nil then
+                targetEnd = index - 1
+                break
+            elseif header == sectionName then
+                targetStart = index
+            elseif targetStart and not targetEnd then
+                targetEnd = index - 1
+                break
+            end
+        end
+    end
+
+    if sectionName == nil then
+        targetEnd = targetEnd or #lines
+    elseif targetStart then
+        targetEnd = targetEnd or #lines
+    else
+        if #lines > 0 and lines[#lines] ~= "" then
+            table.insert(lines, "")
+        end
+        table.insert(lines, "[" .. sectionName .. "]")
+        table.insert(lines, key .. " = " .. valueLiteral)
+        return joinLines(lines)
+    end
+
+    for index = targetStart, targetEnd do
+        if lines[index]:match("^%s*" .. escapedKey .. "%s*=") then
+            lines[index] = key .. " = " .. valueLiteral
+            return joinLines(lines)
+        end
+    end
+
+    local insertIndex
+    if sectionName == nil then
+        insertIndex = firstSectionIndex or (#lines + 1)
+    else
+        insertIndex = targetEnd + 1
+    end
+    table.insert(lines, insertIndex, key .. " = " .. valueLiteral)
+    return joinLines(lines)
+end
+
+local function buildCodexConfig(content)
+    content = upsertTomlKey(content, nil, "service_tier", '"' .. codexRuntimeServiceTier .. '"')
+    content = upsertTomlKey(content, "desktop", "localeOverride", '"zh-CN"')
+    content = upsertTomlKey(content, "desktop", "preventSleepWhileRunning", "true")
+    content = upsertTomlKey(content, "desktop", "conversationDetailMode", '"STEPS_COMMANDS"')
+    content = upsertTomlKey(content, "desktop", "default-service-tier", '"' .. codexDesktopServiceTier .. '"')
+    content = upsertTomlKey(content, "desktop.open-in-target-preferences", "global", '"vscode"')
+    return content
 end
 
 local function readFile(path)
@@ -172,10 +278,41 @@ local function syncCodexDesktopState()
     return writeFileAtomically(path, encoded .. "\n")
 end
 
+local function syncCodexConfig()
+    local path = codexConfigPath()
+    if not path then
+        return false, "CODEX_HOME/HOME unavailable"
+    end
+
+    local content, readErr = readFile(path)
+    if not content then
+        if readErr and not tostring(readErr):find("No such file", 1, true) then
+            return false, readErr
+        end
+        content = ""
+    end
+
+    return writeFileAtomically(path, buildCodexConfig(content))
+end
+
+local function syncCodexLaunchDefaults()
+    local stateOk, stateErr = syncCodexDesktopState()
+    if not stateOk then
+        return false, stateErr
+    end
+
+    local configOk, configErr = syncCodexConfig()
+    if not configOk then
+        return false, configErr
+    end
+
+    return true
+end
+
 local function openCodexApp()
-    local syncOk, syncErr = syncCodexDesktopState()
+    local syncOk, syncErr = syncCodexLaunchDefaults()
     if not syncOk and hs.alert and hs.alert.show then
-        hs.alert.show("Codex UI state sync skipped: " .. tostring(syncErr or "unknown error"))
+        hs.alert.show("Codex launch defaults sync skipped: " .. tostring(syncErr or "unknown error"))
     end
 
     if not hs.task or not hs.task.new then
@@ -311,6 +448,8 @@ function M.toggle(bundleID)
 end
 
 M._codexDesktopStateForTest = buildCodexDesktopState
+M._codexConfigForTest = buildCodexConfig
 M._syncCodexDesktopStateForTest = syncCodexDesktopState
+M._syncCodexConfigForTest = syncCodexConfig
 
 return M

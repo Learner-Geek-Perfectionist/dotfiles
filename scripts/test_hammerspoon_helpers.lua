@@ -469,6 +469,7 @@ end
 
 local codexAppToggler, getCodexLaunchResult = createCodexLaunchFixture()
 assertEqual(type(codexAppToggler._codexDesktopStateForTest), "function", "Codex app launch exposes Desktop state sync helper for regression tests")
+assertEqual(type(codexAppToggler._codexConfigForTest), "function", "Codex app launch exposes config sync helper for regression tests")
 assertEqual(type(codexAppToggler._syncCodexDesktopStateForTest), "function", "Codex app launch exposes Desktop state writer for live verification")
 local desktopState = codexAppToggler._codexDesktopStateForTest({
     ["electron-persisted-atom-state"] = {
@@ -484,7 +485,7 @@ local desktopState = codexAppToggler._codexDesktopStateForTest({
     ["unrelated-root-key"] = "preserved",
 })
 local persistedAtomState = desktopState["electron-persisted-atom-state"]
-assertEqual(persistedAtomState["default-service-tier"], "fast", "Desktop UI speed is pinned to fast")
+assertEqual(persistedAtomState["default-service-tier"], "priority", "Desktop UI speed is pinned to the fast menu value")
 assertTrue(persistedAtomState["has-user-changed-service-tier"], "Desktop UI treats the pinned speed as an explicit user setting")
 assertTrue(persistedAtomState["has-seen-fast-mode-announcement"], "Desktop UI does not reopen the fast-mode announcement")
 assertTrue(persistedAtomState["skip-full-access-confirm"], "Desktop UI does not reopen the full-access confirmation")
@@ -492,6 +493,25 @@ assertEqual(persistedAtomState["agent-mode-by-host-id"]["local"], "full-access",
 assertEqual(persistedAtomState["agent-mode-by-host-id"].remote, "read-write", "Desktop UI state sync preserves unrelated host modes")
 assertEqual(persistedAtomState["prompt-history"].global[1], "keep me", "Desktop UI state sync preserves prompt history")
 assertEqual(desktopState["unrelated-root-key"], "preserved", "Desktop UI state sync preserves unrelated root keys")
+local codexConfig = codexAppToggler._codexConfigForTest([[
+model = "gpt-5.5"
+service_tier = "standard"
+
+[desktop]
+localeOverride = "en-US"
+preventSleepWhileRunning = false
+conversationDetailMode = "SUMMARY"
+default-service-tier = "standard"
+
+[desktop.open-in-target-preferences]
+global = "none"
+]])
+assertTrue(codexConfig:find('service_tier = "fast"', 1, true), "Codex config sync pins runtime service tier")
+assertTrue(codexConfig:find('localeOverride = "zh-CN"', 1, true), "Codex config sync pins Desktop language")
+assertTrue(codexConfig:find("preventSleepWhileRunning = true", 1, true), "Codex config sync pins Desktop prevent-sleep setting")
+assertTrue(codexConfig:find('conversationDetailMode = "STEPS_COMMANDS"', 1, true), "Codex config sync pins Desktop programming detail mode")
+assertTrue(codexConfig:find('default-service-tier = "priority"', 1, true), "Codex config sync pins the Desktop fast UI value")
+assertTrue(codexConfig:find('global = "vscode"', 1, true), "Codex config sync pins Desktop file opener")
 codexAppToggler.toggle("com.openai.codex")
 local codexTaskPath, codexTaskArgs, codexTaskStarted, codexExecuteCommand = getCodexLaunchResult()
 local codexTaskArgText = table.concat(codexTaskArgs or {}, "\n")
@@ -507,7 +527,7 @@ assertTrue(not codexExecuteCommand, "Codex app launch avoids shell-quoted open")
 assertTrue(codexTaskArgText:find('model="gpt-5.5"', 1, true), "Codex app launch pins model")
 assertTrue(codexTaskArgText:find('approvals_reviewer="guardian_subagent"', 1, true), "Codex app launch pins approvals reviewer")
 assertTrue(codexTaskArgText:find('service_tier="fast"', 1, true), "Codex app launch pins service tier")
-assertTrue(codexTaskArgText:find('desktop.default-service-tier="fast"', 1, true), "Codex app launch pins Desktop UI service tier")
+assertTrue(codexTaskArgText:find('desktop.default-service-tier="priority"', 1, true), "Codex app launch pins Desktop UI service tier")
 assertTrue(codexTaskArgText:find('desktop.localeOverride="zh-CN"', 1, true), "Codex app launch pins Desktop UI language")
 assertTrue(codexTaskArgText:find("desktop.preventSleepWhileRunning=true", 1, true), "Codex app launch pins Desktop prevent-sleep setting")
 assertTrue(codexTaskArgText:find('desktop.conversationDetailMode="STEPS_COMMANDS"', 1, true), "Codex app launch pins Desktop programming detail mode")
