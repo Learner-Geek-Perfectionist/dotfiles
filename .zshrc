@@ -170,6 +170,71 @@ else
 fi
 unfunction configure_open_reveal_wrapper 2>/dev/null
 
+# Kitty smart launch context：记录“用户启动命令时所在目录”，直接写入
+# Kitty socket 内存状态，避免启动 kitten 子进程，也避免 zinit/hook 临时 cd
+# 到插件目录时污染 Cmd+E/Cmd+N 的继承目录。
+if [[ -n "${KITTY_WINDOW_ID:-}" ]]; then
+	typeset -g DOTFILES_KITTY_CONTEXT_CWD=""
+
+	_dotfiles_kitty_json_escape() {
+		emulate -L zsh
+		local s="$1"
+		s=${s//\\/\\\\}
+		s=${s//\"/\\\"}
+		s=${s//$'\b'/\\b}
+		s=${s//$'\f'/\\f}
+		s=${s//$'\n'/\\n}
+		s=${s//$'\r'/\\r}
+		s=${s//$'\t'/\\t}
+		REPLY="$s"
+	}
+
+	_dotfiles_kitty_set_context_cwd() {
+		emulate -L zsh
+		[[ "${KITTY_LISTEN_ON:-}" == unix:* ]] || return 0
+		zmodload zsh/net/socket 2>/dev/null || return 0
+
+		local socket_path="${KITTY_LISTEN_ON#unix:}"
+		local escaped_cwd escaped_window_id payload socket_fd rc
+		[[ -n "$socket_path" ]] || return 0
+
+		_dotfiles_kitty_json_escape "$PWD"
+		escaped_cwd="$REPLY"
+		_dotfiles_kitty_json_escape "$KITTY_WINDOW_ID"
+		escaped_window_id="$REPLY"
+		payload='{"cmd":"set-user-vars","version":[0,47,0],"no_response":true,"kitty_window_id":"'$escaped_window_id'","payload":{"var":["dotfiles_context_cwd='$escaped_cwd'"]}}'
+
+		zsocket "$socket_path" 2>/dev/null || return 0
+		socket_fd="$REPLY"
+		print -rn -- $'\eP@kitty-cmd' "$payload" $'\e\\' >&$socket_fd
+		rc=$?
+		exec {socket_fd}>&- 2>/dev/null || :
+		return "$rc"
+	}
+
+	_dotfiles_kitty_publish_context_cwd() {
+		emulate -L zsh
+		[[ -n "${KITTY_WINDOW_ID:-}" ]] || return 0
+		[[ -n "${PWD:-}" && -d "$PWD" ]] || return 0
+		[[ "${DOTFILES_KITTY_CONTEXT_CWD:-}" == "$PWD" ]] && return 0
+
+		DOTFILES_KITTY_CONTEXT_CWD="$PWD"
+		_dotfiles_kitty_set_context_cwd || :
+	}
+
+	_dotfiles_kitty_precmd_context() {
+		_dotfiles_kitty_publish_context_cwd
+	}
+
+	_dotfiles_kitty_preexec_context() {
+		_dotfiles_kitty_publish_context_cwd
+	}
+
+	autoload -Uz add-zsh-hook
+	add-zsh-hook precmd _dotfiles_kitty_precmd_context
+	add-zsh-hook preexec _dotfiles_kitty_preexec_context
+fi
+
 # 生成 GNU 风格 LS_COLORS，供 completion/fzf-tab 与 ls 类工具共享完整颜色规则。
 # 仅在用户未显式设置时初始化，优先使用 Homebrew coreutils 的 gdircolors。
 if [[ -z "${LS_COLORS:-}" ]]; then

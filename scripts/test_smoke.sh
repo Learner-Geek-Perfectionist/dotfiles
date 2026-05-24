@@ -1143,6 +1143,47 @@ EOF
 	assert_contains "native:env-opt-out-host" "$log"
 }
 
+test_zshrc_publishes_kitty_context_cwd_user_var() {
+	local tmp_home log context_dir socket_path
+	tmp_home=$(make_temp_dir)
+	log="$tmp_home/kitty-context.log"
+	context_dir="$tmp_home/project with spaces"
+	socket_path="$tmp_home/kitty.sock"
+	trap "rm -rf '$tmp_home'" RETURN
+
+	cp "$REPO_ROOT/.zshrc" "$tmp_home/.zshrc"
+	mkdir -p "$tmp_home/.cache/zsh" "$context_dir"
+
+	if ! HOME="$tmp_home" ZSH_CACHE_DIR="$tmp_home/.cache/zsh" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+		TERM="xterm-256color" KITTY_WINDOW_ID=123 KITTY_LISTEN_ON="unix:$socket_path" \
+		KITTY_CONTEXT_LOG="$log" CONTEXT_DIR="$context_dir" zsh -fic '
+			zmodload zsh/net/socket
+			zsocket -l "${KITTY_LISTEN_ON#unix:}"
+			listener_fd=$REPLY
+			source "$HOME/.zshrc"
+			cd "$CONTEXT_DIR"
+			_dotfiles_kitty_publish_context_cwd
+			_dotfiles_kitty_publish_context_cwd
+			zsocket -a -t "$listener_fd"
+			connection_fd=$REPLY
+			context_payload=""
+			while IFS= read -r -u "$connection_fd" -k 1 context_char; do
+				context_payload+="$context_char"
+			done
+			print -rn -- "$context_payload" >"$KITTY_CONTEXT_LOG"
+			exec {connection_fd}>&-
+			exec {listener_fd}>&-
+		' >/dev/null 2>&1; then
+		fail "kitty context cwd publisher fixture should execute"
+	fi
+
+	assert_contains "@kitty-cmd" "$log"
+	assert_contains '"cmd":"set-user-vars"' "$log"
+	assert_contains '"kitty_window_id":"123"' "$log"
+	assert_contains "dotfiles_context_cwd=$context_dir" "$log"
+	assert_equal "1" "$(grep -o '@kitty-cmd' "$log" | wc -l | tr -d ' ')" "kitty context cwd should publish only when changed"
+}
+
 test_zshrc_skips_prompt_stack_for_interactive_shell_without_tty() {
 	local tmp_home prompt_stack_marker log timeout_cmd zsh_bin
 	tmp_home=$(make_temp_dir)
@@ -2645,6 +2686,16 @@ if scenario == "local-foreground-stack":
             "cwd": "/Users/work/current-project",
         },
     ]
+if scenario == "local-context-cwd":
+    window.user_vars = {"dotfiles_context_cwd": cwd_value}
+    window.screen.last_reported_cwd = "file:///Users/local/path"
+    window.cwd_of_child = "/Users/local/path"
+    window.child.foreground_processes = [
+        {
+            "cmdline": ["zsh"],
+            "cwd": "/Users/local/.local/share/zinit/plugins/Aloxaf---fzf-tab",
+        },
+    ]
 
 if scenario == "burst-local":
     source_window = Window()
@@ -2889,6 +2940,36 @@ test_kitty_smart_launch_prefers_last_foreground_process_cwd_for_local_tui() {
 
 	run_kitty_ssh_utils_case local-foreground-stack "" "$output_file"
 	assert_kitty_local_fallback_matches "$output_file" "/Users/work/current-project"
+}
+
+test_kitty_smart_launch_prefers_explicit_context_cwd_for_local_windows() {
+	local tmp_dir context_dir output_file
+	tmp_dir=$(make_temp_dir)
+	context_dir="$tmp_dir/project with spaces"
+	output_file="$tmp_dir/local-context-cwd-launch.json"
+	trap 'rm -rf "${tmp_dir:-}"' RETURN
+	mkdir -p "$context_dir"
+
+	run_kitty_ssh_utils_case local-context-cwd "$context_dir" "$output_file"
+
+	python3 - <<PY
+import json
+import pathlib
+
+context_dir = "$context_dir"
+data = json.loads(pathlib.Path("$output_file").read_text())
+expected_args = [
+    "--type=tab",
+    "--source-window=id:42",
+    "--var",
+    "smart_launch_source_window_id=42",
+    "--var",
+    f"dotfiles_context_cwd={context_dir}",
+    f"--cwd={context_dir}",
+]
+if data["args"] != expected_args:
+    raise SystemExit(f"Unexpected context cwd args: {data['args']!r}")
+PY
 }
 
 test_kitty_smart_launch_skips_ssh_when_session_not_established() {
@@ -3146,6 +3227,7 @@ run_test "zsh open wrapper preserves Codex deep links" test_zsh_open_wrapper_pre
 run_test "zshrc does not reload zinit plugins when re-sourced" test_zshrc_does_not_reload_zinit_plugins_when_resourced
 run_test "zshrc detects preloaded zinit without re-sourcing plugin stack" test_zshrc_detects_preloaded_zinit_without_resourcing_plugin_stack
 run_test "zshrc kitty ssh wrapper defaults to kitten and supports opt-out" test_zshrc_kitty_ssh_wrapper_defaults_to_kitten_and_supports_opt_out
+run_test "zshrc publishes kitty context cwd user var" test_zshrc_publishes_kitty_context_cwd_user_var
 run_test "zshrc skips prompt stack for interactive shell without tty" test_zshrc_skips_prompt_stack_for_interactive_shell_without_tty
 run_test "zsh history alias shows newest first with timestamps" test_zsh_history_alias_shows_newest_first_with_timestamps
 run_test "zsh fzf wrapper streams piped input without prefetch" test_zsh_fzf_wrapper_streams_piped_input_without_prefetch
@@ -3181,6 +3263,7 @@ run_test "Claude installer hides deprecated superpowers commands" test_install_c
 run_test "VSCode installer skips GitHub VSIX release lookup in fast mode" test_install_vscode_ext_fast_mode_skips_github_vsix_release_lookup_when_installed
 run_test "kitty smart launch uses native current cwd for local windows" test_kitty_smart_launch_uses_native_current_cwd_for_local_windows
 run_test "kitty smart launch prefers last foreground process cwd for local TUI" test_kitty_smart_launch_prefers_last_foreground_process_cwd_for_local_tui
+run_test "kitty smart launch prefers explicit context cwd for local windows" test_kitty_smart_launch_prefers_explicit_context_cwd_for_local_windows
 run_test "kitty smart launch skips ssh when session not established" test_kitty_smart_launch_skips_ssh_when_session_not_established
 run_test "kitty smart launch clones when remote cwd matches local path" test_kitty_smart_launch_clones_when_remote_cwd_matches_local_path
 run_test "kitty smart launch treats different FQDNs with same shortname as remote" test_kitty_smart_launch_treats_different_fqdns_with_same_shortname_as_remote

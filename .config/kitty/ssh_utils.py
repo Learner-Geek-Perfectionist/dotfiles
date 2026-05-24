@@ -13,6 +13,7 @@ from kittens.ssh.utils import get_connection_data, is_kitten_cmdline
 # 写到新窗口里，下一次连按时就能沿着这条线回溯；否则连按场景会掉到
 # HOME 或其他尚未稳定的工作目录。
 _SMART_SOURCE_WINDOW_ID_VAR = 'smart_launch_source_window_id'
+_DOTFILES_CONTEXT_CWD_VAR = 'dotfiles_context_cwd'
 
 
 def _extract_kitten_cmdline_destination(cmdline):
@@ -128,6 +129,17 @@ def _extract_user_var(window, key):
     return str(value)
 
 
+def _extract_context_cwd(window):
+    cwd = _extract_user_var(window, _DOTFILES_CONTEXT_CWD_VAR)
+    if cwd is None:
+        return None
+
+    if not os.path.isabs(cwd) or not os.path.isdir(cwd):
+        return None
+
+    return cwd
+
+
 def _resolve_repeat_source_window(boss, window):
     seen_window_ids = {window.id}
     current_window = window
@@ -241,11 +253,22 @@ def _with_source_window_var(launch_args, source_window):
     # 给每个新开的窗口都打上“原始稳定源窗口 id”，这样在刚开的标签页上
     # 继续快速连按时，还能在它完成 cwd/ssh 元数据上报前，找回正确的
     # 源窗口。
+    var_args = [
+        '--var',
+        f'{_SMART_SOURCE_WINDOW_ID_VAR}={source_window.id}',
+    ]
+
+    context_cwd = _extract_context_cwd(source_window)
+    if context_cwd is not None:
+        var_args.extend([
+            '--var',
+            f'{_DOTFILES_CONTEXT_CWD_VAR}={context_cwd}',
+        ])
+
     return [
         launch_args[0],
         launch_args[1],
-        '--var',
-        f'{_SMART_SOURCE_WINDOW_ID_VAR}={source_window.id}',
+        *var_args,
         *launch_args[2:],
     ]
 
@@ -393,6 +416,7 @@ def smart_launch(boss, launch_type, target_window_id=None):
     cwd = _extract_last_reported_cwd(window)
     local_cwd = _extract_cwd_of_child(window)
     foreground_cwd = _extract_foreground_process_cwd(window)
+    context_cwd = _extract_context_cwd(window)
     ssh_shaped = _window_looks_ssh_shaped(window, ssh_kitten_cmdline=ssh_kitten_cmdline)
     remote_clone_allowed = (
         trusted_destination is not None
@@ -421,10 +445,11 @@ def smart_launch(boss, launch_type, target_window_id=None):
             prefer_known_local_cwd=True,
         )
     else:
-        # 对 claude/codex 这类长生命周期 TUI，kitty 的 `current` 可能落到
-        # helper 进程或旧 shell 的 cwd。只要能拿到前台主进程的 cwd，就直接
-        # 显式传给 launch；拿不到时再回退到原生 `current`。
-        if foreground_cwd is not None:
+        # 优先使用 shell 明确发布的用户上下文目录。它表示“命令从哪里启动”，
+        # 不会被 zinit、补全或脚本内部的临时 cd 污染。
+        if context_cwd is not None:
+            launch_args = _build_local_launch_args(launch_type, window, explicit_cwd=context_cwd)
+        elif foreground_cwd is not None:
             launch_args = _build_local_launch_args(launch_type, window, explicit_cwd=foreground_cwd)
         else:
             launch_args = _build_native_current_launch_args(launch_type, window)
