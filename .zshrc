@@ -191,12 +191,21 @@ if [[ -n "${KITTY_WINDOW_ID:-}" ]]; then
 
 	_dotfiles_kitty_set_context_cwd() {
 		emulate -L zsh
-		[[ "${KITTY_LISTEN_ON:-}" == unix:* ]] || return 0
-		zmodload zsh/net/socket 2>/dev/null || return 0
-
-		local socket_path="${KITTY_LISTEN_ON#unix:}"
+		local socket_path=""
 		local escaped_cwd escaped_window_id payload socket_fd rc
+
+		if [[ "${KITTY_LISTEN_ON:-}" == unix:* ]]; then
+			socket_path="${KITTY_LISTEN_ON#unix:}"
+		elif [[ -n "${DOTFILES_KITTY_SOCKET_PATH:-}" && -S "$DOTFILES_KITTY_SOCKET_PATH" ]]; then
+			socket_path="$DOTFILES_KITTY_SOCKET_PATH"
+		elif [[ -S /tmp/kitty-socket ]]; then
+			socket_path="/tmp/kitty-socket"
+		else
+			return 0
+		fi
+
 		[[ -n "$socket_path" ]] || return 0
+		zmodload zsh/net/socket 2>/dev/null || return 0
 
 		_dotfiles_kitty_json_escape "$PWD"
 		escaped_cwd="$REPLY"

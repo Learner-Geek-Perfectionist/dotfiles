@@ -1184,6 +1184,75 @@ test_zshrc_publishes_kitty_context_cwd_user_var() {
 	assert_equal "1" "$(grep -o '@kitty-cmd' "$log" | wc -l | tr -d ' ')" "kitty context cwd should publish only when changed"
 }
 
+test_zshrc_publishes_kitty_context_cwd_via_socket_fallback() {
+	local tmp_home log context_dir socket_path
+	tmp_home=$(make_temp_dir)
+	log="$tmp_home/kitty-context-fallback.log"
+	context_dir="$tmp_home/project"
+	socket_path="$tmp_home/kitty.sock"
+	trap "rm -rf '$tmp_home'" RETURN
+
+	cp "$REPO_ROOT/.zshrc" "$tmp_home/.zshrc"
+	mkdir -p "$tmp_home/.cache/zsh" "$context_dir"
+
+	if ! HOME="$tmp_home" ZSH_CACHE_DIR="$tmp_home/.cache/zsh" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+		TERM="xterm-256color" KITTY_WINDOW_ID=123 KITTY_LISTEN_ON= DOTFILES_KITTY_SOCKET_PATH="$socket_path" \
+		KITTY_CONTEXT_LOG="$log" CONTEXT_DIR="$context_dir" zsh -fic '
+			zmodload zsh/net/socket
+			zsocket -l "$DOTFILES_KITTY_SOCKET_PATH"
+			listener_fd=$REPLY
+			source "$HOME/.zshrc"
+			cd "$CONTEXT_DIR"
+			_dotfiles_kitty_publish_context_cwd
+			zsocket -a -t "$listener_fd"
+			connection_fd=$REPLY
+			context_payload=""
+			while IFS= read -r -u "$connection_fd" -k 1 context_char; do
+				context_payload+="$context_char"
+			done
+			print -rn -- "$context_payload" >"$KITTY_CONTEXT_LOG"
+			exec {connection_fd}>&-
+			exec {listener_fd}>&-
+		' >/dev/null 2>&1; then
+		fail "kitty context cwd fallback publisher fixture should execute"
+	fi
+
+	assert_contains '"cmd":"set-user-vars"' "$log"
+	assert_contains '"kitty_window_id":"123"' "$log"
+	assert_contains "dotfiles_context_cwd=$context_dir" "$log"
+}
+
+test_kitty_ssh_config_keeps_orb_on_ssh_kitten() {
+	local config
+	config="$REPO_ROOT/.config/kitty/ssh.conf"
+	[[ -f "$config" ]] || fail "kitty ssh.conf should be managed by dotfiles"
+
+	python3 - "$config" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+blocks = []
+current = []
+for raw_line in path.read_text().splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        continue
+    if line.lower().startswith("hostname "):
+        if current:
+            blocks.append(current)
+        current = [line.lower()]
+    elif current:
+        current.append(line.lower())
+if current:
+    blocks.append(current)
+
+for block in blocks:
+    if block[0] == "hostname orb" and "delegate ssh" in block[1:]:
+        raise SystemExit("orb must not delegate to plain ssh; Cmd+E needs kitty ssh metadata")
+PY
+}
+
 test_zshrc_skips_prompt_stack_for_interactive_shell_without_tty() {
 	local tmp_home prompt_stack_marker log timeout_cmd zsh_bin
 	tmp_home=$(make_temp_dir)
@@ -3228,6 +3297,8 @@ run_test "zshrc does not reload zinit plugins when re-sourced" test_zshrc_does_n
 run_test "zshrc detects preloaded zinit without re-sourcing plugin stack" test_zshrc_detects_preloaded_zinit_without_resourcing_plugin_stack
 run_test "zshrc kitty ssh wrapper defaults to kitten and supports opt-out" test_zshrc_kitty_ssh_wrapper_defaults_to_kitten_and_supports_opt_out
 run_test "zshrc publishes kitty context cwd user var" test_zshrc_publishes_kitty_context_cwd_user_var
+run_test "zshrc publishes kitty context cwd via socket fallback" test_zshrc_publishes_kitty_context_cwd_via_socket_fallback
+run_test "kitty ssh config keeps orb on ssh kitten" test_kitty_ssh_config_keeps_orb_on_ssh_kitten
 run_test "zshrc skips prompt stack for interactive shell without tty" test_zshrc_skips_prompt_stack_for_interactive_shell_without_tty
 run_test "zsh history alias shows newest first with timestamps" test_zsh_history_alias_shows_newest_first_with_timestamps
 run_test "zsh fzf wrapper streams piped input without prefetch" test_zsh_fzf_wrapper_streams_piped_input_without_prefetch
