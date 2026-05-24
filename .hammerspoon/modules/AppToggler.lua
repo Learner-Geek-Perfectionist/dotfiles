@@ -11,7 +11,7 @@ local codexCliPath = "/opt/homebrew/bin/codex"
 local codexLaunchPath = "/usr/bin/env"
 local codexLaunchEnvPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 local codexRuntimeServiceTier = "fast"
-local codexDesktopServiceTier = "priority"
+local codexDesktopServiceTier = "fast"
 local codexFixedConfigArgs = {
     "-c", 'model="gpt-5.5"',
     "-c", "model_context_window=1050000",
@@ -203,6 +203,19 @@ local function upsertTomlKey(content, sectionName, key, valueLiteral)
 end
 
 local function buildCodexConfig(content)
+    content = upsertTomlKey(content, nil, "model", '"gpt-5.5"')
+    content = upsertTomlKey(content, nil, "model_context_window", "1050000")
+    content = upsertTomlKey(content, nil, "model_auto_compact_token_limit", "900000")
+    content = upsertTomlKey(content, nil, "model_reasoning_effort", '"xhigh"')
+    content = upsertTomlKey(content, nil, "model_reasoning_summary", '"detailed"')
+    content = upsertTomlKey(content, nil, "model_verbosity", '"low"')
+    content = upsertTomlKey(content, nil, "approvals_reviewer", '"guardian_subagent"')
+    content = upsertTomlKey(content, nil, "approval_policy", '"never"')
+    content = upsertTomlKey(content, nil, "sandbox_mode", '"danger-full-access"')
+    content = upsertTomlKey(content, nil, "file_opener", '"vscode"')
+    content = upsertTomlKey(content, nil, "hide_agent_reasoning", "false")
+    content = upsertTomlKey(content, nil, "show_raw_agent_reasoning", "false")
+    content = upsertTomlKey(content, nil, "suppress_unstable_features_warning", "true")
     content = upsertTomlKey(content, nil, "service_tier", '"' .. codexRuntimeServiceTier .. '"')
     content = upsertTomlKey(content, "desktop", "localeOverride", '"zh-CN"')
     content = upsertTomlKey(content, "desktop", "preventSleepWhileRunning", "true")

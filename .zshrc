@@ -188,6 +188,7 @@ typeset -ga DOTFILES_CODEX_FIXED_CONFIG_ARGS=(
 	-c 'show_raw_agent_reasoning=false'
 	-c 'suppress_unstable_features_warning=true'
 	-c 'service_tier="fast"'
+	-c 'desktop.default-service-tier="fast"'
 )
 
 codex-raw() {

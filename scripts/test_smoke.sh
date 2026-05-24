@@ -1071,15 +1071,100 @@ EOF
 	assert_contains '[model="gpt-5.5"]' "$first_call"
 	assert_contains '[model_reasoning_effort="xhigh"]' "$first_call"
 	assert_contains '[service_tier="fast"]' "$first_call"
+	assert_contains '[desktop.default-service-tier="fast"]' "$first_call"
 	assert_contains '[hello world]' "$first_call"
 
 	assert_contains '[app]' "$second_call"
 	assert_contains '[model="gpt-5.5"]' "$second_call"
 	assert_contains '[sandbox_mode="danger-full-access"]' "$second_call"
+	assert_contains '[desktop.default-service-tier="fast"]' "$second_call"
 
 	assert_contains '[exec]' "$third_call"
 	assert_not_contains '[model="gpt-5.5"]' "$third_call"
 	assert_not_contains '[service_tier="fast"]' "$third_call"
+	assert_not_contains '[desktop.default-service-tier="fast"]' "$third_call"
+}
+
+test_codex_launch_defaults_sync_script_pins_config_and_desktop_state() {
+	local tmp_home tmp_codex config state state_bak state_check
+
+	if ! command -v node >/dev/null 2>&1; then
+		warn "node missing; skipping Codex launch defaults sync script test"
+		return 0
+	fi
+
+	tmp_home=$(make_temp_dir)
+	tmp_codex="$tmp_home/.codex"
+	config="$tmp_codex/config.toml"
+	state="$tmp_codex/.codex-global-state.json"
+	state_bak="$state.bak"
+	state_check="$tmp_home/state-check.json"
+	trap "rm -rf '$tmp_home'" RETURN
+
+	mkdir -p "$tmp_codex"
+	cat >"$config" <<'EOF'
+model = "old"
+service_tier = "standard"
+
+[desktop]
+localeOverride = "en-US"
+preventSleepWhileRunning = false
+conversationDetailMode = "SUMMARY"
+default-service-tier = "standard"
+
+[desktop.open-in-target-preferences]
+global = "none"
+EOF
+	cat >"$state" <<'EOF'
+{
+  "electron-persisted-atom-state": {
+    "default-service-tier": "standard",
+    "agent-mode-by-host-id": {
+      "local": "read-write",
+      "remote": "read-write"
+    },
+    "prompt-history": {
+      "global": ["keep me"]
+    }
+  },
+  "unrelated-root-key": "preserved"
+}
+EOF
+	cp "$state" "$state_bak"
+
+	CODEX_HOME="$tmp_codex" HOME="$tmp_home" node "$REPO_ROOT/scripts/sync_codex_launch_defaults.js" >/dev/null
+
+	assert_contains 'model = "gpt-5.5"' "$config"
+	assert_contains 'model_context_window = 1050000' "$config"
+	assert_contains 'model_auto_compact_token_limit = 900000' "$config"
+	assert_contains 'model_reasoning_effort = "xhigh"' "$config"
+	assert_contains 'approval_policy = "never"' "$config"
+	assert_contains 'sandbox_mode = "danger-full-access"' "$config"
+	assert_contains 'service_tier = "fast"' "$config"
+	assert_contains 'localeOverride = "zh-CN"' "$config"
+	assert_contains 'preventSleepWhileRunning = true' "$config"
+	assert_contains 'conversationDetailMode = "STEPS_COMMANDS"' "$config"
+	assert_contains 'default-service-tier = "fast"' "$config"
+	assert_contains 'global = "vscode"' "$config"
+
+	node - "$state" "$state_bak" >"$state_check" <<'NODE'
+const fs = require("fs");
+const [statePath, backupPath] = process.argv.slice(2);
+for (const filePath of [statePath, backupPath]) {
+  const state = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const atom = state["electron-persisted-atom-state"];
+  if (atom["default-service-tier"] !== "fast") throw new Error(`${filePath}: speed not fast`);
+  if (atom["has-user-changed-service-tier"] !== true) throw new Error(`${filePath}: speed not marked user-set`);
+  if (atom["has-seen-fast-mode-announcement"] !== true) throw new Error(`${filePath}: announcement not acknowledged`);
+  if (atom["skip-full-access-confirm"] !== true) throw new Error(`${filePath}: full-access prompt not skipped`);
+  if (atom["agent-mode-by-host-id"].local !== "full-access") throw new Error(`${filePath}: local mode not full access`);
+  if (atom["agent-mode-by-host-id"].remote !== "read-write") throw new Error(`${filePath}: remote mode not preserved`);
+  if (atom["prompt-history"].global[0] !== "keep me") throw new Error(`${filePath}: prompt history not preserved`);
+  if (state["unrelated-root-key"] !== "preserved") throw new Error(`${filePath}: root state not preserved`);
+}
+console.log("ok");
+NODE
+	assert_contains "ok" "$state_check"
 }
 
 test_zshrc_does_not_reload_zinit_plugins_when_resourced() {
@@ -1241,7 +1326,7 @@ test_zshrc_publishes_kitty_context_cwd_via_socket_fallback() {
 	mkdir -p "$tmp_home/.cache/zsh" "$context_dir"
 
 	if ! HOME="$tmp_home" ZSH_CACHE_DIR="$tmp_home/.cache/zsh" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-		TERM="xterm-256color" KITTY_WINDOW_ID=123 KITTY_LISTEN_ON= DOTFILES_KITTY_SOCKET_PATH="$socket_path" \
+		TERM="xterm-256color" KITTY_WINDOW_ID=123 KITTY_LISTEN_ON='' DOTFILES_KITTY_SOCKET_PATH="$socket_path" \
 		KITTY_CONTEXT_LOG="$log" CONTEXT_DIR="$context_dir" zsh -fic '
 			zmodload zsh/net/socket
 			zsocket -l "$DOTFILES_KITTY_SOCKET_PATH"
@@ -3426,6 +3511,7 @@ run_test "superpowers pull does not retry GitHub SSH failures" test_superpowers_
 run_test "Dotfiles pre-cleans stale zinit completions" test_dotfiles_precleans_zinit_stale_completions
 run_test "Dotfiles warns when zinit plugin sync fails" test_dotfiles_warns_when_zinit_plugin_sync_fails
 run_test "zsh open wrapper preserves Codex deep links" test_zsh_open_wrapper_preserves_codex_deep_links
+run_test "Codex launch defaults sync pins config and Desktop state" test_codex_launch_defaults_sync_script_pins_config_and_desktop_state
 run_test "zsh codex wrapper pins interactive launches" test_zsh_codex_wrapper_pins_interactive_launches
 run_test "zshrc does not reload zinit plugins when re-sourced" test_zshrc_does_not_reload_zinit_plugins_when_resourced
 run_test "zshrc detects preloaded zinit without re-sourcing plugin stack" test_zshrc_detects_preloaded_zinit_without_resourcing_plugin_stack
